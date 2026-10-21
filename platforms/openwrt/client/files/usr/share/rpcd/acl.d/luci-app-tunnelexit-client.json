@@ -1,0 +1,13 @@
+{
+        "luci-app-tunnelexit-client": {
+                "description": "Grant access to TunnelExit Client",
+                "read": {
+                        "file": {
+                                "/usr/share/tunnelexit-client/client.json": [ "read" ]
+                        }
+                },
+                "write": {
+                        "file": {}
+                }
+        }
+}

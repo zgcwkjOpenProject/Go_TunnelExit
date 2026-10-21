@@ -1,0 +1,12 @@
+[
+  {
+    "step_title": "Before you start",
+    "items": [
+      { "desc": "This package runs the TunnelExit client on this NAS: the server dials targets through this machine's network, so external sites see this NAS egress address." },
+      { "desc": "Edit client.json in the package folder and set serverHost to the server address, port to the server tunnel port (default 9733) and serverKey to the public key in keys/public_key.pem on the server, then restart the package." },
+      { "desc": "The client ID is generated on first start and written back to client.json. Do not delete it or copy the file to another machine: the server binds the ID and the source IP together and pins a SOCKS5 port to them." },
+      { "desc": "The server only accepts idle connections from the same source address as the login connection, so do not share one client.json across machines." },
+      { "desc": "Click the TunnelExit client icon on the DSM desktop to open the local configuration page. The package publishes the page through DSM Webman, so no extra port has to be exposed; direct access to port 7003 needs TUNNELEXIT_WEB_TOKEN set first." }
+    ]
+  }
+]

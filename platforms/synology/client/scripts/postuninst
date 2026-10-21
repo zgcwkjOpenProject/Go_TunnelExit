@@ -1,0 +1,11 @@
+#!/bin/sh
+
+. "$(dirname "$0")/functions"
+
+case "${wizard_delete_data:-false}" in
+    true|1|yes|delete)
+        remove_user_data || exit 1
+        ;;
+esac
+
+exit 0

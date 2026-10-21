@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# 卸载前调用：先停止套件进程，让它把运行目录里的配置与日志备份到用户数据目录
+# 停止与备份都交给套件主脚本，两处不重复维护同一套搬运规则
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+
+if [ -f "$script_dir/main" ]; then
+    bash "$script_dir/main" stop > /dev/null 2>&1 || true
+fi
+
+exit 0

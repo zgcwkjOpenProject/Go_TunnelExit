@@ -1,0 +1,11 @@
+[Unit]
+Description=TunnelExit Client
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/var/packages/tunnelexit-client/target/app/start.sh
+# control-group 确保 stop/restart 时清掉进程组内残留的子进程
+KillMode=control-group
+Restart=always
+RestartSec=3

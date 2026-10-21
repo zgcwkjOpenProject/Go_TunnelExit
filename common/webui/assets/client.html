@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+{{STYLE}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>{{TITLE}}</h1>
+    <span id="hint">正在加载…</span>
+    <div class="tabs">
+      <button class="tab active" id="tab-config" type="button">配置</button>
+      <button class="tab" id="tab-log" type="button">日志</button>
+    </div>
+  </header>
+
+  <section id="panel-config">
+    <h2>运行参数</h2>
+    <div class="grid" id="form"></div>
+    <div class="actions">
+      <button class="primary" id="save" type="button">保存配置</button>
+      <button id="reload" type="button">重新读取</button>
+    </div>
+    <p id="message"></p>
+    <details class="help">
+      <summary>保存与公钥说明</summary>
+      <p class="field-hint">保存后立即生效，无需重启进程。本页只改影响隧道的参数；界面自身的监听地址、端口与路径前缀不在此页修改，改动它们会让本页失去访问地址，只能改配置文件或用 TUNNELEXIT_WEB_HOST、TUNNELEXIT_WEB_PORT、TUNNELEXIT_WEB_PATH 指定后重启进程</p>
+      <p class="field-hint">公钥填错不影响本页打开，但客户端会一直连不上服务端并每小时重试一次，日志里有公钥不一致的提示；公钥取自服务端运行目录 keys/public_key.pem，服务端重新生成密钥对后要重新粘贴</p>
+    </details>
+  </section>
+
+  <section id="panel-log" hidden>
+    <h2>运行日志</h2>
+    <pre id="log" class="empty">正在加载…</pre>
+  </section>
+</div>
+
+<script>
+'use strict';
+
+// 界面挂载路径，接口地址都基于它拼接，页面挂在子路径下也能正确请求
+var BASE = '{{BASE}}';
+{{HELPERS}}
+// 页面只提供影响隧道的参数
+//
+// 界面自身的监听地址、端口与路径前缀一律不放上页面：改了这几个字段本页就失去访问地址，
+// 用户只能到机器上改配置文件才能救回来，因此只由配置文件与 TUNNELEXIT_WEB_* 环境变量决定
+var FIELDS = [
+  { key: 'serverHost', label: '服务端地址', type: 'text', hint: '填入服务器的公网或内网 IP' },
+  { key: 'port', label: '隧道端口', type: 'int', hint: '必须与服务端一致' },
+  { key: 'serverKey', label: '服务端公钥', type: 'pem', hint: '粘贴服务端运行目录 keys/public_key.pem 的整份内容，含首尾行；填错或留空会一直连不上' },
+  { key: 'id', label: '客户端 ID', type: 'text', hint: '首次运行自动生成并保存，一般无需修改' },
+  { key: 'name', label: '客户端名称', type: 'text', hint: '只写入服务端日志与节点记录，展示页不显示' },
+  { key: 'poolSize', label: '空闲连接数', type: 'int', hint: '普通用户无需修改' }
+];
+
+var fields = FIELDS;
+var inputs = {};
+
+// 在页面上生成配置输入项
+function buildForm() {
+  var form = document.getElementById('form');
+  fields.forEach(function(field) {
+    var label = document.createElement('label');
+    label.textContent = field.label;
+    label.setAttribute('for', 'f-' + field.key);
+
+    // 公钥是多行 PEM 文本，用多行输入框避免用户无从判断是否存留换行
+    var input = field.type === 'pem' ? document.createElement('textarea') : document.createElement('input');
+    input.id = 'f-' + field.key;
+    if (field.type === 'pem') {
+      input.rows = 8;
+      input.spellcheck = false;
+    } else {
+      input.type = field.type === 'int' ? 'number' : 'text';
+    }
+    if (field.type === 'int') {
+      input.min = '1';
+      input.max = '65535';
+    }
+    inputs[field.key] = input;
+
+    var hint = document.createElement('div');
+    hint.className = 'field-hint';
+    hint.textContent = field.hint;
+
+    form.appendChild(label);
+    form.appendChild(input);
+    form.appendChild(hint);
+  });
+}
+
+// 把配置对象填进输入框
+function fill(config) {
+  fields.forEach(function(field) {
+    var value = config[field.key];
+    inputs[field.key].value = (value === undefined || value === null) ? '' : String(value);
+  });
+}
+
+// 从输入框读出配置对象
+function collect() {
+  var result = {};
+  fields.forEach(function(field) {
+    var raw = inputs[field.key].value.trim();
+    result[field.key] = field.type === 'int' ? (parseInt(raw, 10) || 0) : raw;
+  });
+  return result;
+}
+// 更新顶部状态提示
+function setHint(text) {
+  document.getElementById('hint').textContent = text;
+}
+
+// 展示操作结果
+function setMessage(text, ok) {
+  var node = document.getElementById('message');
+  node.textContent = text;
+  node.className = ok ? 'ok' : (text ? 'err' : '');
+}
+
+// 读取当前配置
+function loadConfig() {
+  setMessage('', true);
+  return fetch(BASE + 'api/config', { cache: 'no-store' })
+    .then(function(response) {
+      if (!response.ok) { throw new Error('读取失败，HTTP ' + response.status); }
+      return response.json();
+    })
+    .then(function(config) {
+      fill(config);
+      setHint('已连接到本机进程');
+    })
+    .catch(function(err) {
+      setHint('无法读取配置');
+      setMessage(err.message, false);
+    });
+}
+
+// 保存配置到文件
+function saveConfig() {
+  var button = document.getElementById('save');
+  button.disabled = true;
+  setMessage('正在保存…', true);
+  fetch(BASE + 'api/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(collect())
+  })
+    .then(function(response) {
+      if (!response.ok) { return response.text().then(function(t) { throw new Error(t.trim() || ('HTTP ' + response.status)); }); }
+      return response.json();
+    })
+    .then(function(data) {
+      setMessage(data.message || '配置已保存', true);
+      return loadConfig();
+    })
+    .catch(function(err) {
+      setMessage(err.message, false);
+    })
+    .finally(function() {
+      button.disabled = false;
+    });
+}
+
+// 读取日志尾部
+function loadLog() {
+  fetch(BASE + 'api/log?lines=100', { cache: 'no-store' })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
+      var node = document.getElementById('log');
+      var lines = data.lines || [];
+      if (!lines.length) {
+        node.textContent = data.message || '暂无日志';
+        node.className = 'empty';
+        return;
+      }
+      node.className = '';
+      node.textContent = lines.join('\n');
+      node.scrollTop = node.scrollHeight;
+    })
+    .catch(function() {});
+}
+
+// 在配置与日志面板之间切换，同一时间只显示一个
+function showPanel(name) {
+  var config = name === 'config';
+  document.getElementById('panel-config').hidden = !config;
+  document.getElementById('panel-log').hidden = config;
+  document.getElementById('tab-config').className = config ? 'tab active' : 'tab';
+  document.getElementById('tab-log').className = config ? 'tab' : 'tab active';
+  if (!config) {
+    loadLog();
+  }
+}
+
+buildForm();
+document.getElementById('save').addEventListener('click', saveConfig);
+document.getElementById('reload').addEventListener('click', function() {
+  loadConfig();
+  loadLog();
+});
+document.getElementById('tab-config').addEventListener('click', function() {
+  showPanel('config');
+});
+document.getElementById('tab-log').addEventListener('click', function() {
+  showPanel('log');
+});
+loadConfig();
+
+// 日志随运行状态变化，只在其面板可见时刷新，避免打扰正在编辑的输入框
+window.setInterval(function() {
+  if (!document.getElementById('panel-log').hidden) {
+    loadLog();
+  }
+}, 5000);
+</script>
+</body>
+</html>

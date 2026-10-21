@@ -1,0 +1,22 @@
+# TunnelExit OpenWrt 配置文件
+# 修改后执行 /etc/init.d/tunnelexit reload 生效
+
+config server 'server'
+	# 是否开机启动
+	option enabled '1'
+	# 隧道端口，两侧必须一致
+	option port '9733'
+	# SOCKS5 端口监听地址
+	option socks_host '0.0.0.0'
+	# 客户端 SOCKS5 端口分配起点
+	option socks_port_base '19733'
+	# 按客户端 ID 分配的 SOCKS5 端口数量，范围用满时拒绝新客户端接入
+	option socks_port_count '2500'
+	# 每个客户端维持的空闲连接数
+	option pool_size '16'
+	# 展示页监听地址，改成 0.0.0.0 后才能从局域网访问根路径
+	option web_host '127.0.0.1'
+	# 展示页监听端口
+	option web_port '9732'
+	# 展示页的挂载路径前缀，经反向代理走子路径时填写
+	option web_path '/'

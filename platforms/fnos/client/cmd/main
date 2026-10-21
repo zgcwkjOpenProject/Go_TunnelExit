@@ -1,0 +1,182 @@
+#!/bin/bash
+
+PID_FILE="${TRIM_PKGVAR}/tunnelexit.pid"
+
+# 套件程序与随包资源目录
+APP_DIR="${TRIM_APPDEST}"
+# 运行目录：程序把配置与日志都写在这里
+RUN_DIR="${TRIM_PKGVAR}"
+# 启动脚本自身的日志
+LOG_DIR="${RUN_DIR}/logs"
+LOG_FILE="${LOG_DIR}/start.log"
+
+BIN="${APP_DIR}/tunnelexit-client"
+
+# 运行目录里需要跨卸载保留的文件与目录
+PERSISTENT_FILES="client.json logs"
+
+# 备份目录优先用用户数据共享目录，其次运行目录：共享目录在卸载套件后仍然保留
+DATA_HOME="${RUN_DIR}"
+if [ -n "$TRIM_DATA_SHARE_PATHS" ]; then
+    first_share="$(echo "$TRIM_DATA_SHARE_PATHS" | cut -d: -f1 | cut -d, -f1)"
+    if [ -d "$first_share" ]; then
+        DATA_HOME="$first_share"
+    fi
+fi
+
+# 初始化可写日志文件
+init_log_file() {
+    mkdir -p "$TRIM_PKGVAR" 2>/dev/null || true
+    mkdir -p "$LOG_DIR" 2>/dev/null || true
+    touch "$LOG_FILE" 2>/dev/null || true
+}
+
+# 写入运行日志
+log_msg() {
+    init_log_file
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG_FILE"
+}
+
+# 写入平台可见的错误信息
+write_user_error() {
+    echo "$1" > "$TRIM_TEMP_LOGFILE"
+    log_msg "ERROR: $1"
+}
+
+# 启动前补齐运行目录里缺失的文件与目录：先用备份目录里的副本还原，没有备份时用随包默认文件补齐
+sync_data_to_app() {
+    mkdir -p "$RUN_DIR" 2>/dev/null || true
+    local name
+    for name in $PERSISTENT_FILES; do
+        if [ -e "$RUN_DIR/$name" ]; then
+            continue
+        fi
+        local source_dir
+        for source_dir in "$DATA_HOME" "$APP_DIR"; do
+            if [ -e "$source_dir/$name" ]; then
+                cp -rf "$source_dir/$name" "$RUN_DIR/$name" 2>> "$LOG_FILE"
+                break
+            fi
+        done
+    done
+}
+
+# 停止后把运行目录里的文件与目录备份到备份目录，重装与升级后据此还原
+sync_data_from_app() {
+    if [ -z "$DATA_HOME" ] || [ "$DATA_HOME" = "/" ]; then
+        return 0
+    fi
+    mkdir -p "$DATA_HOME" 2>/dev/null || true
+    local name
+    for name in $PERSISTENT_FILES; do
+        if [ ! -e "$RUN_DIR/$name" ] || [ "$DATA_HOME/$name" = "$RUN_DIR/$name" ]; then
+            continue
+        fi
+        # 复制目录前先清掉同名旧备份，避免目录嵌套
+        rm -rf "$DATA_HOME/$name"
+        cp -rf "$RUN_DIR/$name" "$DATA_HOME/$name" 2>> "$LOG_FILE"
+    done
+}
+
+# 检查进程是否仍在运行
+check_process() {
+    local pid="$1"
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+# 查询套件进程状态
+status_app() {
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+        if check_process "$pid"; then
+            return 0
+        fi
+        rm -f "$PID_FILE"
+    fi
+    return 1
+}
+
+# 启动客户端并写入 PID
+start_app() {
+    if status_app; then
+        return 0
+    fi
+
+    init_log_file
+    log_msg "Log file: $LOG_FILE"
+
+    if [ ! -f "$BIN" ]; then
+        write_user_error "未找到二进制: $BIN"
+        return 1
+    fi
+
+    # 运行时补可执行位，避免打包工具丢失权限
+    chmod +x "$BIN" 2>/dev/null || true
+    sync_data_to_app
+
+    log_msg "Starting tunnelexit-client: $BIN"
+    # 让配置与日志落在可写目录，并让配置页只监听套件目录内的 unix socket
+    TUNNELEXIT_APP_DIR="$RUN_DIR" \
+        TUNNELEXIT_WEB_SOCKET="$APP_DIR/app.sock" \
+        TUNNELEXIT_WEB_PATH="/app/tunnelexit-client" \
+        PACK_PLATFORM="fnos" "$BIN" >> "$LOG_FILE" 2>&1 &
+
+    echo "$!" > "$PID_FILE"
+    sleep 1
+
+    if status_app; then
+        return 0
+    fi
+
+    write_user_error "tunnelexit-client 启动后立即退出，请查看 $LOG_FILE。"
+    return 1
+}
+
+# 停止客户端进程并清理 PID 文件
+stop_app() {
+    init_log_file
+    log_msg "Stopping tunnelexit-client..."
+
+    if [ -f "$PID_FILE" ]; then
+        local pid
+        pid="$(head -n 1 "$PID_FILE" | tr -d '[:space:]')"
+
+        if check_process "$pid"; then
+            kill -TERM "$pid" 2>> "$LOG_FILE" || true
+
+            local count
+            count=0
+            while check_process "$pid" && [ "$count" -lt 10 ]; do
+                sleep 1
+                count=$((count + 1))
+            done
+
+            if check_process "$pid"; then
+                kill -KILL "$pid" 2>> "$LOG_FILE" || true
+            fi
+        fi
+        rm -f "$PID_FILE"
+    fi
+
+    sync_data_from_app
+}
+
+case "$1" in
+start)
+    start_app
+    ;;
+stop)
+    stop_app
+    ;;
+status)
+    if status_app; then
+        exit 0
+    fi
+    exit 3
+    ;;
+*)
+    echo "Unknown command: $1" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+    ;;
+esac

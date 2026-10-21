@@ -1,0 +1,16 @@
+{
+  ".url": {
+    "tunnelexit.Application": {
+      "title": "TunnelExit",
+      "icon": "images/icon_{0}.png",
+      "type": "iframe",
+      "gatewayPrefix": "/app/tunnelexit",
+      "gatewaySocket": "app.sock",
+      "url": "/app/tunnelexit",
+      "allUsers": false,
+      "control": {
+        "accessPerm": "readonly"
+      }
+    }
+  }
+}

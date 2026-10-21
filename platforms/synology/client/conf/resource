@@ -1,0 +1,13 @@
+{
+  "systemd-user-unit": {},
+  "web-config": {
+    "nginx-static-config": {
+      "enable": [
+        {
+          "type": "dsm",
+          "relpath": "etc/www/tunnelexit-client.nginx.conf"
+        }
+      ]
+    }
+  }
+}

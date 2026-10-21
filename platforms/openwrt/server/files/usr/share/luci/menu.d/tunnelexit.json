@@ -1,0 +1,13 @@
+{
+        "admin/services/tunnelexit": {
+                "title": "TunnelExit",
+                "order": 90,
+                "action": {
+                        "type": "view",
+                        "path": "tunnelexit"
+                },
+                "depends": {
+                        "acl": [ "luci-app-tunnelexit" ]
+                }
+        }
+}

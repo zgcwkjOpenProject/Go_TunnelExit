@@ -1,0 +1,11 @@
+#!/bin/sh
+
+. "$(dirname "$0")/functions"
+
+# 升级会重建 target 目录，数据保存在 var/app，升级后先恢复到程序目录
+if ! sync_data_to_app; then
+    echo "ERROR: unable to restore package data after upgrade." >&2
+    exit 1
+fi
+
+exit 0

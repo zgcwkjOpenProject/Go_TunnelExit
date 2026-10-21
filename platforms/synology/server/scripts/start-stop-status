@@ -1,0 +1,19 @@
+#!/bin/sh
+case "$1" in
+    start)
+        exec synosystemctl start pkguser-tunnelexit
+        ;;
+    stop)
+        exec synosystemctl stop pkguser-tunnelexit
+        ;;
+    status)
+        exec synosystemctl get-active-status pkguser-tunnelexit
+        ;;
+    log)
+        echo "/var/packages/tunnelexit/var/app/logs/tunnelexit.log"
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|status}" >&2
+        exit 1
+        ;;
+esac

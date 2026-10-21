@@ -1,0 +1,23 @@
+[
+  {
+    "step_title": "解除安裝套件",
+    "items": [
+      {
+        "type": "singleselect",
+        "desc": "保留或刪除套件設定。",
+        "subitems": [
+          {
+            "key": "wizard_keep_data",
+            "desc": "<b>僅解除安裝。</b>保留 server.json、clients.json、keys 與執行日誌，方便日後重新安裝。",
+            "defaultValue": true
+          },
+          {
+            "key": "wizard_delete_data",
+            "desc": "<b style=\"color: red\">刪除套件所有資料檔案。（不可恢復）</b>",
+            "defaultValue": false
+          }
+        ]
+      }
+    ]
+  }
+]

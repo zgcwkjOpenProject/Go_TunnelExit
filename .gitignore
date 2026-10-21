@@ -25,9 +25,25 @@ profile.cov
 go.work
 go.work.sum
 
-# env file
-.env
+# 编辑器
+.vscode/
+.idea/
+*.swp
 
-# Editor/IDE
-# .idea/
-# .vscode/
+# 运行时数据
+.env
+*.log
+config.json
+clients.json
+logs/*.log
+
+# 依赖与工具
+fnpack.exe
+node_modules/
+
+# 本地签名凭据
+signing.local.ps1
+
+# 构建暂存与发布产物
+/build/
+/dist/

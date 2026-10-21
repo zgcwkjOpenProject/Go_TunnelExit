@@ -1,0 +1,12 @@
+[
+  {
+    "step_title": "使用说明",
+    "items": [
+      { "desc": "本套件在本 NAS 上运行 TunnelExit 客户端：服务端收到外部 SOCKS5 请求后，由本 NAS 拨号访问目标资源，因此外部看到的是本机的出口地址。" },
+      { "desc": "编辑套件目录下的 client.json，把 serverHost 改成服务端地址、port 改成服务端隧道端口（默认 9733）、serverKey 填成服务端 keys/public_key.pem 里的公钥，保存后重启套件即可生效。" },
+      { "desc": "客户端唯一 ID 首次启动自动生成并写回 client.json，请勿删除，也不要复制到其他机器：服务端把客户端 ID 与来源 IP 绑定在一起，据此分配固定的 SOCKS5 端口。" },
+      { "desc": "服务端只接受与登录连接同一来源地址的空闲连接，多台机器共用同一份 client.json 会互相顶掉会话。" },
+      { "desc": "点击 DSM 桌面上的 TunnelExit 客户端图标即可打开本机配置页，页面经群晖 Webman 入口访问，无需额外开放端口；直连 7003 端口前先设置 TUNNELEXIT_WEB_TOKEN 口令。" }
+    ]
+  }
+]

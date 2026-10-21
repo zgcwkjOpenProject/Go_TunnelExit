@@ -1,0 +1,10 @@
+#!/bin/sh
+
+. "$(dirname "$0")/functions"
+
+if ! sync_data_to_app; then
+    echo "ERROR: unable to restore package data." >&2
+    exit 1
+fi
+
+exit 0

@@ -1,0 +1,76 @@
+#!/bin/sh
+
+# 群晖安装和升级会重建 target，用户数据单独保存在 var/app
+
+PKG_NAME="${SYNOPKG_PKGNAME:-tunnelexit-client}"
+PKG_DEST="${SYNOPKG_PKGDEST:-/var/packages/${PKG_NAME}/target}"
+PKG_VAR="${SYNOPKG_PKGVAR:-/var/packages/${PKG_NAME}/var}"
+APP_DIR="${PKG_DEST}/app"
+DATA_DIR="${PKG_VAR}/app"
+
+# 需要跨安装升级保留的运行时文件与目录
+PERSISTENT_FILES="client.json logs"
+
+# 移动存在的用户文件或目录，源不存在时跳过
+move_file_if_exists() {
+    source="$1"
+    target="$2"
+    if [ ! -e "$source" ]; then
+        return 0
+    fi
+    # 搬目录前先清掉同名目标，避免目录嵌套
+    if [ -d "$source" ]; then
+        rm -rf "$target"
+    fi
+    mv -f "$source" "$target"
+}
+
+# 创建套件持久化数据目录
+ensure_data_dir() {
+    mkdir -p "$DATA_DIR" || return 1
+    chmod 750 "$DATA_DIR" 2>/dev/null || true
+    chown "${PKG_NAME}:system" "$DATA_DIR" 2>/dev/null || true
+    return 0
+}
+
+# 启动前恢复持久化数据到程序目录
+sync_data_to_app() {
+    ensure_data_dir || return 1
+    mkdir -p "$APP_DIR" || return 1
+    for name in $PERSISTENT_FILES; do
+        move_file_if_exists "${DATA_DIR}/${name}" "${APP_DIR}/${name}" || return 1
+        if [ -d "${APP_DIR}/${name}" ]; then
+            # 目录保留可进入权限，程序才能在里面对日志归档
+            chmod 750 "${APP_DIR}/${name}" 2>/dev/null || true
+        elif [ -e "${APP_DIR}/${name}" ]; then
+            chmod 640 "${APP_DIR}/${name}" 2>/dev/null || true
+        fi
+        chown "${PKG_NAME}:system" "${APP_DIR}/${name}" 2>/dev/null || true
+    done
+    return 0
+}
+
+# 停止后保存程序目录中的用户数据
+sync_data_from_app() {
+    ensure_data_dir || return 1
+    mkdir -p "$APP_DIR" || return 1
+    for name in $PERSISTENT_FILES; do
+        move_file_if_exists "${APP_DIR}/${name}" "${DATA_DIR}/${name}" || return 1
+    done
+    return 0
+}
+
+# 按卸载向导选择删除用户数据
+remove_user_data() {
+    case "$DATA_DIR" in
+        ""|"/"|"/var"|"/var/packages"|"/var/packages/${PKG_NAME}")
+            echo "ERROR: refusing to remove unsafe data path: ${DATA_DIR}" >&2
+            return 1
+            ;;
+    esac
+    if [ -d "$DATA_DIR" ]; then
+        find "$DATA_DIR" -mindepth 1 -delete
+        rmdir "$DATA_DIR" 2>/dev/null || true
+    fi
+    return 0
+}

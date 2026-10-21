@@ -1,0 +1,23 @@
+[
+  {
+    "stepTitle": "卸载应用",
+    "items": [
+      {
+        "type": "radio",
+        "field": "wizard_delete_data",
+        "label": "是否删除 TunnelExit 的配置与端口映射数据",
+        "initValue": "keep",
+        "options": [
+          {
+            "label": "仅卸载，保留配置与端口映射",
+            "value": "keep"
+          },
+          {
+            "label": "删除应用数据(不可恢复)",
+            "value": "delete"
+          }
+        ]
+      }
+    ]
+  }
+]

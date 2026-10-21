@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# DSM creates the package user from conf/privilege.
+exit 0

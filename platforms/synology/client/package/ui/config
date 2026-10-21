@@ -1,0 +1,22 @@
+{
+  "Main.js": {
+    "SYNO.SDS.TunnelExit.Instance": {
+      "type": "app",
+      "version": "0.0.0",
+      "desc": "TunnelExit 客户端配置页",
+      "icon": "images/icon_{0}.png",
+      "title": "TunnelExit",
+      "allowMultiInstance": false,
+      "appWindow": "SYNO.SDS.TunnelExit.Main",
+      "allUsers": true,
+      "grantPrivilege": "local",
+      "depend": []
+    },
+    "SYNO.SDS.TunnelExit.Main": {
+      "type": "lib",
+      "title": "TunnelExit",
+      "icon": "images/icon_{0}.png",
+      "depend": []
+    }
+  }
+}

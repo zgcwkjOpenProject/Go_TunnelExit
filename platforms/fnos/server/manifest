@@ -1,0 +1,15 @@
+appname=tunnelexit
+version=0.0.0
+display_name=TunnelExit
+desc=反向 SOCKS5 隧道服务端：让外部通过本机端口访问客户端所在网络的资源
+source=thirdparty
+platform=x86
+maintainer=zgcwkj
+maintainer_url=https://github.com/zgcwkj
+distributor=zgcwkj
+desktop_uidir=ui
+desktop_applaunchname=tunnelexit.Application
+ctl_stop=true
+os_min_version=1.1.3100
+checkport=false
+changelog=首个版本，提供反向 SOCKS5 隧道服务端

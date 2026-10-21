@@ -1,0 +1,12 @@
+[
+  {
+    "step_title": "Instructions",
+    "items": [
+      { "desc": "TunnelExit runs a reverse SOCKS5 server on this NAS. The client dials in, and the server allocates a dedicated SOCKS5 port for it." },
+      { "desc": "This package installs the server only. Install the client (tunnelexit-client from the portable client ZIP, or the Android APK) on the machine whose network you want to borrow, point it at this NAS address, then use the allocated SOCKS5 port from any app." },
+      { "desc": "Default tunnel port 9733, SOCKS5 ports from 19733. Edit server.json in the package folder and restart the package to change them." },
+      { "desc": "Port assignments are stored in clients.json so a client ID keeps the same SOCKS5 port after reconnecting from the same source IP; a same-ID login from another IP is rejected while the old session is still online." },
+      { "desc": "The first start generates private_key.pem, server.crt and public_key.pem under the keys folder in the package directory; the public key file opens in any text editor for copy-paste. The tunnel port only accepts encrypted connections, so paste the whole public key into the client config page; a missing or wrong key cannot connect." }
+    ]
+  }
+]

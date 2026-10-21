@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# 卸载后调用：按卸载向导的选择清理用户数据目录里的备份
+
+# 备份目录优先用用户数据共享目录，其次运行目录，规则与套件主脚本保持一致
+DATA_HOME="${TRIM_PKGVAR}"
+if [ -n "$TRIM_DATA_SHARE_PATHS" ]; then
+    first_share="$(echo "$TRIM_DATA_SHARE_PATHS" | cut -d: -f1 | cut -d, -f1)"
+    if [ -d "$first_share" ]; then
+        DATA_HOME="$first_share"
+    fi
+fi
+
+case "${wizard_delete_data:-keep}" in
+delete|true|yes|1)
+    if [ -z "$DATA_HOME" ] || [ "$DATA_HOME" = "/" ]; then
+        echo "拒绝清理不安全的目录: ${DATA_HOME}" >&2
+        exit 1
+    fi
+    # 只删除套件自己的文件，备份目录里可能有用户的其他内容
+    for name in client.json logs; do
+        rm -rf "$DATA_HOME/$name"
+    done
+    # 备份目录清空后一并移除，非空时保留
+    rmdir "$DATA_HOME" 2>/dev/null || true
+    ;;
+esac
+
+exit 0

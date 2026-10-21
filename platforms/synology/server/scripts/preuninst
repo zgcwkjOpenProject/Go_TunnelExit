@@ -1,0 +1,10 @@
+#!/bin/sh
+
+# Stop first so the final move cannot race with the Go process writing data.
+synosystemctl stop pkguser-tunnelexit 2>/dev/null || true
+
+# Keep the latest files in var/app before DSM removes target/.
+. "$(dirname "$0")/functions"
+sync_data_from_app || true
+
+exit 0

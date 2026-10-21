@@ -1,0 +1,31 @@
+[
+  {
+    "stepTitle": "使用说明",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "TunnelExit 客户端借用本机网络出口：服务端收到外部 SOCKS5 请求后，由本 NAS 拨号访问目标资源，因此外部看到的是本机的出口地址。"
+      },
+      {
+        "type": "tips",
+        "helpText": "首次使用点开桌面图标打开本机配置页，填好服务端地址、隧道端口（默认 9733）与服务端公钥并保存即可，配置立即生效，不用重启套件。"
+      },
+      {
+        "type": "tips",
+        "helpText": "服务端公钥是服务端 keys/public_key.pem 里的 PEM 文本，含首尾行；隧道端口只接受加密连接，未填或填错都会连不上，粘贴时请整段复制。"
+      },
+      {
+        "type": "tips",
+        "helpText": "客户端唯一 ID 首次运行自动生成并写回 client.json，不要删除，也不要复制到其他机器：服务端按「客户端 ID + 来源 IP」共同确定身份并分配固定的 SOCKS5 端口。"
+      },
+      {
+        "type": "tips",
+        "helpText": "服务端只接受与登录连接同一来源地址的空闲连接，多台机器共用同一份 client.json 会互相顶掉会话。"
+      },
+      {
+        "type": "tips",
+        "helpText": "安装后在桌面能看到 TunnelExit 图标，点开就是本机配置页。配置页只监听套件目录内的 unix socket，由系统网关按固定前缀转发，不额外开放端口，也不受 client.json 里 webHost 与 webPort 的影响，因此无需设置访问口令。"
+      }
+    ]
+  }
+]
