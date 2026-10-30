@@ -86,14 +86,17 @@ button:disabled { opacity: .6; cursor: default; }
 .nodes table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .nodes th, .nodes td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
 .nodes th { color: var(--muted); font-weight: 500; }
+/* 归属地文本长度不受控，允许换行并允许长词断开，避免单列把表格撑出卡片 */
+.nodes th:nth-child(2), .nodes td:nth-child(2) { white-space: normal; overflow-wrap: anywhere; }
 .nodes tbody tr:last-child td { border-bottom: none; }
-@media (max-width: 720px) {
+/* 表格列较多，宽度不足时提前换成卡片形态，避免列被挤出卡片 */
+@media (max-width: 760px) {
   .nodes { overflow-x: visible; }
   .nodes table, .nodes tbody, .nodes tr, .nodes td { display: block; }
   .nodes thead { display: none; }
   .nodes tr { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 10px; margin-bottom: 10px; }
   .nodes tbody tr:last-child { margin-bottom: 0; }
-  .nodes td { display: grid; grid-template-columns: 6.5em 1fr; gap: 4px; align-items: baseline; padding: 0; border-bottom: none; white-space: normal; }
+  .nodes td { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: 4px; align-items: baseline; padding: 0; border-bottom: none; white-space: normal; overflow-wrap: anywhere; }
   .nodes td::before { content: attr(data-label) '：'; color: var(--muted); }
   .nodes td.empty { display: block; }
   .nodes td.empty::before { content: none; }
