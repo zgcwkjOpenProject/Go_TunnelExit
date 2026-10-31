@@ -57,6 +57,27 @@ func TestParse(t *testing.T) {
 	}
 }
 
+// TestRegionPlace 验证地图落点键国内取省份简称、境外取国名、保留地址为空
+func TestRegionPlace(t *testing.T) {
+	cases := []struct {
+		text  string
+		place string
+	}{
+		{"中国|江苏省|南京市|电信|CN", "江苏"},
+		{"中国|北京市|北京市|联通|CN", "北京"},
+		{"中国|广西壮族自治区|南宁市|0|CN", "广西"},
+		{"United States|California|0|Google LLC|US", "United States"},
+		{"Japan|Hokkaido|Ishikari|0|JP", "Japan"},
+		{"Reserved|Reserved|Reserved|0|0", ""},
+		{"0|0|0|0|0", ""},
+	}
+	for _, item := range cases {
+		if place := Parse(item.text).Place(); place != item.place {
+			t.Fatalf("%s 的落点应为 %q，实际 %q", item.text, item.place, place)
+		}
+	}
+}
+
 // TestLookupChineseAddress 验证国内地址能查到国家与省份
 func TestLookupChineseAddress(t *testing.T) {
 	database := openDatabase(t)

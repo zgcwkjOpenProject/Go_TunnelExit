@@ -2,6 +2,7 @@
 package test
 
 import (
+	"bufio"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -407,7 +408,7 @@ func TestWebUINodesAnonymous(t *testing.T) {
 	nodes := []app.NodeStatus{
 		{
 			Address: "203.0.113.7", Name: "inner-host", Port: 18080, State: app.NodeStateOnline,
-			Region: "中国 江苏省 南京市", Up: 1024, Down: 2048, ActiveStreams: 2, TotalStreams: 9, LastSeen: now,
+			Place: "江苏", Region: "中国 江苏省 南京市", Up: 1024, Down: 2048, ActiveStreams: 2, TotalStreams: 9, LastSeen: now,
 		},
 		{
 			Address: "203.0.113.8", Name: "idle-host", Port: 18081, State: app.NodeStateOffline,
@@ -427,6 +428,7 @@ func TestWebUINodesAnonymous(t *testing.T) {
 	}
 	var views []struct {
 		Port          int           `json:"port"`
+		Place         string        `json:"place"`
 		Region        string        `json:"region"`
 		State         app.NodeState `json:"state"`
 		Up            uint64        `json:"up"`
@@ -444,6 +446,9 @@ func TestWebUINodesAnonymous(t *testing.T) {
 	if views[0].Port != 18080 || views[0].Region != "中国 江苏省 南京市" || views[0].Up != 1024 || views[0].Down != 2048 {
 		t.Fatalf("匿名节点字段不符: %+v", views[0])
 	}
+	if views[0].Place != "江苏" || views[1].Place != "" {
+		t.Fatalf("匿名节点落点不符: %+v", views)
+	}
 	if views[0].State != app.NodeStateOnline || views[0].ActiveStreams != 2 || views[0].TotalStreams != 9 {
 		t.Fatalf("匿名节点状态不符: %+v", views[0])
 	}
@@ -452,6 +457,59 @@ func TestWebUINodesAnonymous(t *testing.T) {
 	}
 	if views[1].State != app.NodeStateOffline || !views[1].LastSeen.IsZero() {
 		t.Fatalf("离线节点未透传零值时间: %+v", views[1])
+	}
+}
+
+// TestWebUIStreamPushesNodes 验证实时推送接口按事件流格式下发节点与速率字段
+func TestWebUIStreamPushesNodes(t *testing.T) {
+	clearTunnelEnv(t)
+	nodes := []app.NodeStatus{{
+		Address: "203.0.113.7", Name: "inner-host", Port: 18080, State: app.NodeStateOnline,
+		Place: "江苏", Region: "中国 江苏省 南京市", Up: 1024, Down: 2048,
+	}}
+	base := startUIWithNodes(t, webui.ModeServer, t.TempDir(), func() []app.NodeStatus {
+		return nodes
+	})
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(base + "/api/stream")
+	if err != nil {
+		t.Fatalf("请求实时推送失败: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("实时推送响应不符: %d %q", resp.StatusCode, resp.Header.Get("Content-Type"))
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	data := ""
+	for data == "" {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("读取推送内容失败: %v", err)
+		}
+		if strings.HasPrefix(line, "data: ") {
+			data = strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+		}
+	}
+
+	var views []struct {
+		Port      int    `json:"port"`
+		State     string `json:"state"`
+		UpSpeed   int64  `json:"upSpeed"`
+		DownSpeed int64  `json:"downSpeed"`
+	}
+	if err := json.Unmarshal([]byte(data), &views); err != nil {
+		t.Fatalf("解析推送数据失败: %v，原文 %s", err, data)
+	}
+	if len(views) != 1 || views[0].Port != 18080 {
+		t.Fatalf("推送节点不符: %+v", views)
+	}
+	if views[0].UpSpeed != 0 || views[0].DownSpeed != 0 {
+		t.Fatalf("首轮推送速率应为零: %+v", views[0])
+	}
+	if strings.Contains(data, "203.0.113") || strings.Contains(data, "inner-host") {
+		t.Fatalf("推送数据泄露了来源 IP 或客户端名称: %s", data)
 	}
 }
 

@@ -3,6 +3,7 @@ package webui
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -14,30 +15,19 @@ import (
 	"tunnelexit/webui/assets"
 )
 
-// handleStatus 输出服务端对外公开的匿名节点展示页
-func (u *UI) handleStatus(w http.ResponseWriter, r *http.Request) {
+// handlePage 输出本角色对应的页面，服务端是展示页、客户端是配置页
+func (u *UI) handlePage(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != u.basePath() {
 		http.NotFound(w, r)
 		return
 	}
-	u.renderPage(w, assets.StatusPage, "TunnelExit 节点状态")
-}
-
-// handleConfigPage 输出客户端配置管理页
-func (u *UI) handleConfigPage(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != u.basePath() {
-		http.NotFound(w, r)
-		return
+	template, title := assets.StatusPage, "TunnelExit 节点状态"
+	if u.opts.Mode == ModeClient {
+		template, title = assets.ClientPage, "TunnelExit 客户端配置"
 	}
-	u.renderPage(w, assets.ClientPage, "TunnelExit 客户端配置")
-}
-
-// renderPage 输出页面模板，替换标题、路径前缀与共用样式和函数占位符
-func (u *UI) renderPage(w http.ResponseWriter, template string, title string) {
-	page := renderTemplate(template, title, u.basePath())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = io.WriteString(w, page)
+	_, _ = io.WriteString(w, renderTemplate(template, title, u.basePath()))
 }
 
 // handleConfig 读取或保存客户端配置文件
@@ -53,10 +43,7 @@ func (u *UI) handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// configPayload 是配置页允许修改的字段集合
-//
-// 界面自身的监听地址、端口与路径前缀故意不在此列：它们决定了这个页面本身挂在哪里，
-// 允许从页面改动就会让页面失去访问地址，只能由配置文件与 TUNNELEXIT_WEB_* 环境变量维护
+// configPayload 是配置页允许修改的字段集合，界面自身的监听参数不在其中
 type configPayload struct {
 	ServerHost string `json:"serverHost"` // 隧道服务端地址
 	Port       int    `json:"port"`       // 隧道服务端端口
@@ -66,10 +53,7 @@ type configPayload struct {
 	PoolSize   int    `json:"poolSize"`   // 客户端维持的空闲连接数
 }
 
-// saveConfig 解析请求体并原子写入客户端配置文件，随后让新参数立即生效
-//
-// 以磁盘现有配置为底再叠加请求体，页面未提供的字段保持原值，界面监听参数因此不会被重置；
-// 读取原始文件而不套用环境变量，避免把环境变量取值固化进配置文件
+// saveConfig 以磁盘现有配置为底叠加请求体后原子写入，未提供的字段保持原值
 func (u *UI) saveConfig(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxConfigBody))
 	if err != nil {
@@ -105,8 +89,6 @@ func (u *UI) saveConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 // applySaved 把保存结果交给入口回调，由入口按新参数重建隧道连接
-//
-// 界面自身不重启隧道也不改动监听参数，只负责通知保存结果
 func (u *UI) applySaved() {
 	if u.opts.OnConfigSaved == nil {
 		return
@@ -114,28 +96,29 @@ func (u *UI) applySaved() {
 	u.opts.OnConfigSaved()
 }
 
-// nodeView 是公开展示接口返回的匿名节点数据
-//
-// 单独定义而不是复用 app.NodeStatus，让匿名化在类型层面强制生效，新增可公开字段时两处都要改
+// nodeView 是公开展示接口返回的匿名节点数据，不复用 app.NodeStatus 以强制匿名化
 type nodeView struct {
 	Port          int           `json:"port"`          // 分配给该节点的 SOCKS5 端口
 	Region        string        `json:"region"`        // 来源 IP 的归属地展示文本
+	Place         string        `json:"place"`         // 地图落点键，空串表示无法定位
 	State         app.NodeState `json:"state"`         // 当前状态
 	Up            uint64        `json:"up"`            // 累计上行字节数
 	Down          uint64        `json:"down"`          // 累计下行字节数
+	UpSpeed       int64         `json:"upSpeed"`       // 最近采样区间的上行速率，单位字节每秒
+	DownSpeed     int64         `json:"downSpeed"`     // 最近采样区间的下行速率，单位字节每秒
 	ActiveStreams int           `json:"activeStreams"` // 当前正在转发的流数量
 	TotalStreams  uint64        `json:"totalStreams"`  // 累计建立过的流数量
 	LastSeen      time.Time     `json:"lastSeen"`      // 最近一次确认在线的时间，零值表示从未在线
 }
 
-// handleNodes 返回匿名节点列表，供公开展示页面轮询
-func (u *UI) handleNodes(w http.ResponseWriter, r *http.Request) {
-	nodes := u.nodes()
+// nodeViews 把节点状态裁剪成公开字段，速率由调用方按需填充
+func nodeViews(nodes []app.NodeStatus) []nodeView {
 	views := make([]nodeView, 0, len(nodes))
 	for _, node := range nodes {
 		views = append(views, nodeView{
 			Port:          node.Port,
 			Region:        node.Region,
+			Place:         node.Place,
 			State:         node.State,
 			Up:            node.Up,
 			Down:          node.Down,
@@ -144,7 +127,79 @@ func (u *UI) handleNodes(w http.ResponseWriter, r *http.Request) {
 			LastSeen:      node.LastSeen,
 		})
 	}
-	writeJSON(w, http.StatusOK, views)
+	return views
+}
+
+// handleNodes 返回一次性的匿名节点列表，速率字段恒为零
+func (u *UI) handleNodes(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, nodeViews(u.nodes()))
+}
+
+// handleStream 用 SSE 持续推送带即时速率的匿名节点列表
+func (u *UI) handleStream(w http.ResponseWriter, r *http.Request) {
+	controller := http.NewResponseController(w)
+	if err := controller.SetWriteDeadline(time.Time{}); err != nil {
+		http.Error(w, "当前连接不支持实时推送", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	sampler := &speedSampler{}
+	for {
+		views := nodeViews(u.nodes())
+		sampler.measure(views, time.Now())
+		payload, err := json.Marshal(views)
+		if err != nil {
+			return
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
+			return
+		}
+		if err := controller.Flush(); err != nil {
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(streamInterval):
+		}
+	}
+}
+
+// speedSampler 按节点端口保存上一轮的累计字节与时刻，用于换算即时速率
+type speedSampler struct {
+	last map[int]speedSample
+}
+
+// speedSample 是某个节点一轮采样的累计字节数与时刻
+type speedSample struct {
+	up   uint64
+	down uint64
+	at   time.Time
+}
+
+// measure 按与上一轮的间隔填充速率字段并记录本轮采样，已消失的端口随之淘汰
+func (s *speedSampler) measure(views []nodeView, now time.Time) {
+	seen := make(map[int]speedSample, len(views))
+	for i := range views {
+		view := &views[i]
+		if previous, ok := s.last[view.Port]; ok {
+			seconds := now.Sub(previous.at).Seconds()
+			view.UpSpeed = rate(view.Up, previous.up, seconds)
+			view.DownSpeed = rate(view.Down, previous.down, seconds)
+		}
+		seen[view.Port] = speedSample{up: view.Up, down: view.Down, at: now}
+	}
+	s.last = seen
+}
+
+// rate 用两轮累计字节差除以间隔得到每秒字节数，计数回退时记为零
+func rate(current uint64, previous uint64, seconds float64) int64 {
+	if current <= previous || seconds <= 0 {
+		return 0
+	}
+	return int64(float64(current-previous) / seconds)
 }
 
 // handleLog 返回程序日志的末尾若干行，仅客户端界面使用

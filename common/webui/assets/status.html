@@ -8,23 +8,44 @@
 {{STYLE}}
 </style>
 </head>
-<body>
+<body class="status-page">
 <div class="wrap">
   <header>
     <h1>{{TITLE}}</h1>
     <span id="hint">正在加载…</span>
+    <div class="tabs">
+      <button class="tab" id="tab-map" type="button">地图</button>
+      <button class="tab active" id="tab-list" type="button">列表</button>
+    </div>
   </header>
 
   <div class="cards">
     <div class="card"><div class="label">在线节点</div><div class="value" id="stat-online">0</div></div>
-    <div class="card"><div class="label">建立中</div><div class="value" id="stat-establishing">0</div></div>
     <div class="card"><div class="label">离线节点</div><div class="value" id="stat-offline">0</div></div>
     <div class="card"><div class="label">活动连接</div><div class="value" id="stat-streams">0</div></div>
     <div class="card"><div class="label">累计上行</div><div class="value" id="stat-up">0 B</div></div>
     <div class="card"><div class="label">累计下行</div><div class="value" id="stat-down">0 B</div></div>
   </div>
 
-  <section>
+  <section id="panel-map" hidden>
+    <h2>节点分布</h2>
+    <div class="map" id="map">
+      <div class="map-canvas" id="map-canvas"></div>
+    </div>
+    <div class="map-legend">
+      <span class="legend-item"><i class="dot on"></i>在线</span>
+      <span class="legend-item"><i class="dot warn"></i>建立中</span>
+      <span class="legend-item"><i class="dot off"></i>离线</span>
+      <span class="legend-item map-note" id="map-note"></span>
+      <span class="map-tools">
+        <button type="button" id="zoom-in" title="放大">＋</button>
+        <button type="button" id="zoom-out" title="缩小">－</button>
+        <button type="button" id="zoom-reset" title="回到整幅世界地图">100%</button>
+      </span>
+    </div>
+  </section>
+
+  <section id="panel-list">
     <h2>节点列表</h2>
     <div class="nodes">
       <table>
@@ -43,7 +64,7 @@
         <tbody id="nodes"></tbody>
       </table>
     </div>
-    <p class="field-hint">上行是外部客户端发往目标方向的数据量，下行是目标返回给外部客户端的数据量，两者都是该节点累计值，不是即时速率</p>
+    <p class="field-hint">上行是外部客户端发往目标方向的数据量，下行是目标返回给外部客户端的数据量，两者都是该节点累计值；地图标签上的端口速率是每秒值</p>
   </section>
 </div>
 
@@ -53,6 +74,7 @@
 // 界面挂载路径，接口地址都基于它拼接，页面挂在子路径下也能正确请求
 var BASE = '{{BASE}}';
 {{HELPERS}}
+{{MAP}}
 // 补足两位数字
 function pad(value) {
   return value < 10 ? '0' + value : '' + value;
@@ -67,10 +89,9 @@ function formatTime(value) {
     ' ' + pad(date.getHours()) + ':' + pad(date.getMinutes());
 }
 
-// 统计并填充顶部汇总卡片
+// 统计并填充顶部汇总卡片，非在线状态一律计入离线
 function renderSummary(items) {
   var online = 0;
-  var establishing = 0;
   var offline = 0;
   var streams = 0;
   var up = 0;
@@ -78,8 +99,6 @@ function renderSummary(items) {
   items.forEach(function(item) {
     if (item.state === 'online') {
       online += 1;
-    } else if (item.state === 'establishing') {
-      establishing += 1;
     } else {
       offline += 1;
     }
@@ -88,7 +107,6 @@ function renderSummary(items) {
     down += Number(item.down) || 0;
   });
   document.getElementById('stat-online').textContent = String(online);
-  document.getElementById('stat-establishing').textContent = String(establishing);
   document.getElementById('stat-offline').textContent = String(offline);
   document.getElementById('stat-streams').textContent = String(streams);
   document.getElementById('stat-up').textContent = formatBytes(up);
@@ -106,6 +124,9 @@ function makeCell(label, text, child) {
 // 渲染节点列表，宽屏下是表格，窄屏下由样式把每行改成卡片
 function renderNodes(items) {
   var body = document.getElementById('nodes');
+  // 列表在宽屏下内部滚动，重绘时保留原来的滚动位置
+  var holder = body.closest('.nodes');
+  var top = holder ? holder.scrollTop : 0;
   body.textContent = '';
   if (!items.length) {
     var emptyRow = document.createElement('tr');
@@ -129,28 +150,487 @@ function renderNodes(items) {
     row.appendChild(makeCell('最近在线', formatTime(item.lastSeen)));
     body.appendChild(row);
   });
+  if (holder) { holder.scrollTop = top; }
 }
 
-// 拉取匿名节点数据并刷新页面
-function loadNodes() {
-  fetch(BASE + 'api/nodes', { cache: 'no-store' })
-    .then(function(response) {
-      if (!response.ok) { throw new Error('HTTP ' + response.status); }
-      return response.json();
-    })
-    .then(function(items) {
-      var list = items || [];
-      renderSummary(list);
-      renderNodes(list);
-      document.getElementById('hint').textContent = '数据每 5 秒自动刷新';
-    })
-    .catch(function() {
-      document.getElementById('hint').textContent = '暂时无法读取节点状态';
+// SVG 命名空间，动态创建标记时必须显式指定
+var SVG_NS = 'http://www.w3.org/2000/svg';
+
+// 底图视口固定按世界地图的长宽比裁切，缩放时渲染高度才不会变
+var MAP_RATIO = WORLD_MAP.height / WORLD_MAP.width;
+
+// 空间极度不足时的地图高度下限，再小就放弃避让滚动条
+var MAP_MIN_HEIGHT = 70;
+
+// 缩放范围，100% 表示整幅世界地图铺满容器宽度
+var MAP_ZOOM_MIN = 1;
+var MAP_ZOOM_MAX = 8;
+
+// 地图当前缩放倍数与中心点，首次打开是 100% 的世界地图
+var mapZoom = 1;
+var mapCenter = [WORLD_MAP.width / 2, WORLD_MAP.height / 2];
+
+// 当前显示速率的落点，悬停优先预览，没悬停时看单击选中的那个
+var mapHover = null;
+var mapSelected = null;
+var mapGroups = [];
+
+// 最近一次渲染用的节点数据，窗口尺寸或面板变化后据此重绘
+var lastItems = [];
+
+// 三个状态的优先级，同一落点有多个节点时按最差的状态上色
+function stateRank(state) {
+  if (state === 'online') { return 0; }
+  if (state === 'establishing') { return 1; }
+  return 2;
+}
+
+// 把节点按落点键聚合，返回落点分组与无法定位的节点数
+function groupByPlace(items) {
+  var groups = {};
+  var unknown = 0;
+  items.forEach(function(item) {
+    var point = item.place ? WORLD_MAP.places[item.place] : null;
+    if (!point) {
+      unknown += 1;
+      return;
+    }
+    var group = groups[item.place];
+    if (!group) {
+      group = { point: point, nodes: [] };
+      groups[item.place] = group;
+    }
+    group.nodes.push(item);
+  });
+  return { groups: groups, unknown: unknown };
+}
+
+// 汇总一个落点内节点的最差状态与实时速率，供标记上色与波纹使用
+function summarize(group) {
+  var summary = { state: 'offline', speed: 0 };
+  group.nodes.forEach(function(item) {
+    if (stateRank(item.state) < stateRank(summary.state)) { summary.state = item.state; }
+    summary.speed += (Number(item.upSpeed) || 0) + (Number(item.downSpeed) || 0);
+  });
+  return summary;
+}
+
+// 按当前缩放倍数与中心点算出视口，中心点始终夹在底图内，拖不出空白
+function mapView() {
+  var span = WORLD_MAP.width / mapZoom;
+  var height = span * MAP_RATIO;
+  mapCenter[0] = Math.min(Math.max(mapCenter[0], span / 2), WORLD_MAP.width - span / 2);
+  mapCenter[1] = Math.min(Math.max(mapCenter[1], height / 2), WORLD_MAP.height - height / 2);
+  return [mapCenter[0] - span / 2, mapCenter[1] - height / 2, span, height];
+}
+
+// 以底图坐标 anchor 为锚点缩放，该点在屏幕上尽量不动，鼠标所指的位置不会跑
+function zoomMap(zoom, anchor) {
+  var next = Math.min(Math.max(zoom, MAP_ZOOM_MIN), MAP_ZOOM_MAX);
+  var point = anchor || mapCenter;
+  var ratio = mapZoom / next;
+  mapCenter = [
+    point[0] + (mapCenter[0] - point[0]) * ratio,
+    point[1] + (mapCenter[1] - point[1]) * ratio
+  ];
+  mapZoom = next;
+  renderMap(lastItems);
+}
+
+// 把屏幕坐标换算成底图坐标，缩放锚点与拖动都按它换算
+function toWorld(canvas, view, x, y) {
+  var rect = canvas.getBoundingClientRect();
+  return [
+    view[0] + (x - rect.left) * view[2] / rect.width,
+    view[1] + (y - rect.top) * view[3] / rect.height
+  ];
+}
+
+// 屏幕坐标命中最接近的落点，圆点很小所以放宽到圆点半径的几倍
+function hitGroup(x, y) {
+  var canvas = document.getElementById('map-canvas');
+  if (!canvas.clientWidth) { return null; }
+  var view = mapView();
+  var point = toWorld(canvas, view, x, y);
+  var px = view[2] / canvas.clientWidth;
+  var found = null;
+  var nearest = Infinity;
+  mapGroups.forEach(function(entry) {
+    var dx = entry.group.point[0] - point[0];
+    var dy = entry.group.point[1] - point[1];
+    var distance = Math.sqrt(dx * dx + dy * dy);
+    if (distance > Math.max(entry.radius * 2.5, px * 14)) { return; }
+    if (distance < nearest) { nearest = distance; found = entry.key; }
+  });
+  return found;
+}
+
+// 滚轮缩放、拖动平移与双指捏合只绑定一次，指针事件同时覆盖鼠标与触摸
+function bindMap() {
+  var box = document.getElementById('map');
+  if (box.getAttribute('data-bound')) { return; }
+  box.setAttribute('data-bound', '1');
+  var canvas = document.getElementById('map-canvas');
+
+  box.addEventListener('wheel', function(event) {
+    event.preventDefault();
+    var view = mapView();
+    zoomMap(mapZoom * (event.deltaY < 0 ? 1.25 : 0.8), toWorld(canvas, view, event.clientX, event.clientY));
+  }, { passive: false });
+
+  var pointers = {};
+  var drag = null;
+
+  // 按当前按下的点数重建拖动基准，单指记起点，双指记间距与中点
+  function begin() {
+    var ids = Object.keys(pointers);
+    var view = mapView();
+    drag = null;
+    if (ids.length === 1) {
+      drag = { view: view, center: mapCenter.slice(), x: pointers[ids[0]].x, y: pointers[ids[0]].y };
+    } else if (ids.length > 1) {
+      var first = pointers[ids[0]];
+      var second = pointers[ids[1]];
+      var mid = [(first.x + second.x) / 2, (first.y + second.y) / 2];
+      drag = {
+        view: view, center: mapCenter.slice(), zoom: mapZoom, mid: mid,
+        distance: Math.hypot(first.x - second.x, first.y - second.y) || 1,
+        anchor: toWorld(canvas, view, mid[0], mid[1])
+      };
+    }
+  }
+
+  // 双指时按间距倍数缩放，再跟随中点位移平移
+  function pinch() {
+    var ids = Object.keys(pointers);
+    var first = pointers[ids[0]];
+    var second = pointers[ids[1]];
+    var mid = [(first.x + second.x) / 2, (first.y + second.y) / 2];
+    var distance = Math.hypot(first.x - second.x, first.y - second.y) || 1;
+    var rect = canvas.getBoundingClientRect();
+    var next = Math.min(Math.max(drag.zoom * distance / drag.distance, MAP_ZOOM_MIN), MAP_ZOOM_MAX);
+    var ratio = drag.zoom / next;
+    mapCenter = [
+      drag.anchor[0] + (drag.center[0] - drag.anchor[0]) * ratio - (mid[0] - drag.mid[0]) * drag.view[2] / rect.width,
+      drag.anchor[1] + (drag.center[1] - drag.anchor[1]) * ratio - (mid[1] - drag.mid[1]) * drag.view[3] / rect.height
+    ];
+    mapZoom = next;
+  }
+
+  box.addEventListener('pointerdown', function(event) {
+    event.preventDefault();
+    pointers[event.pointerId] = { x: event.clientX, y: event.clientY, from: [event.clientX, event.clientY] };
+    box.setPointerCapture(event.pointerId);
+    box.classList.add('grabbing');
+    begin();
+  });
+
+  box.addEventListener('pointermove', function(event) {
+    if (!pointers[event.pointerId] || !drag) {
+      // 没在拖动时鼠标划过哪个落点就预览哪个落点的速率
+      var hover = event.pointerType === 'mouse' ? hitGroup(event.clientX, event.clientY) : mapHover;
+      if (hover !== mapHover) { mapHover = hover; renderMap(lastItems); }
+      return;
+    }
+    pointers[event.pointerId] = {
+      x: event.clientX, y: event.clientY, from: pointers[event.pointerId].from
+    };
+    if (Object.keys(pointers).length === 1) {
+      var rect = canvas.getBoundingClientRect();
+      mapCenter = [
+        drag.center[0] - (event.clientX - drag.x) * drag.view[2] / rect.width,
+        drag.center[1] - (event.clientY - drag.y) * drag.view[3] / rect.height
+      ];
+    } else {
+      pinch();
+    }
+    renderMap(lastItems);
+  });
+
+  box.addEventListener('pointerleave', function() {
+    if (drag || !mapHover) { return; }
+    mapHover = null;
+    renderMap(lastItems);
+  });
+
+  // 松开一指后按剩下的手指重建基准，单击（几乎没位移）则选中该落点
+  function release(event) {
+    var start = pointers[event.pointerId];
+    delete pointers[event.pointerId];
+    var tap = event.type === 'pointerup' && start && !Object.keys(pointers).length &&
+      Math.hypot(event.clientX - start.from[0], event.clientY - start.from[1]) < 6;
+    if (tap) {
+      var hit = hitGroup(event.clientX, event.clientY);
+      mapSelected = hit === mapSelected ? null : hit;
+      renderMap(lastItems);
+    }
+    if (Object.keys(pointers).length) { begin(); } else { drag = null; box.classList.remove('grabbing'); }
+  }
+  box.addEventListener('pointerup', release);
+  box.addEventListener('pointercancel', release);
+
+  document.getElementById('zoom-in').addEventListener('click', function() { zoomMap(mapZoom * 1.4); });
+  document.getElementById('zoom-out').addEventListener('click', function() { zoomMap(mapZoom / 1.4); });
+  document.getElementById('zoom-reset').addEventListener('click', function() {
+    mapZoom = 1;
+    mapCenter = [WORLD_MAP.width / 2, WORLD_MAP.height / 2];
+    renderMap(lastItems);
+  });
+}
+
+// 按端口大小列出各节点的当前速率，与标签首行的落点名称拼成多行文本
+function labelLines(group) {
+  return group.nodes.slice().sort(function(left, right) { return left.port - right.port; })
+    .map(function(node) {
+      var speed = (Number(node.upSpeed) || 0) + (Number(node.downSpeed) || 0);
+      return node.port + '：' + formatBytes(speed) + '/s';
     });
 }
 
-loadNodes();
-window.setInterval(loadNodes, 5000);
+// 落点挨得近时标签会叠在一起，按上下左右四个方向逐步外移找空位并夹在视口内
+// 挪不出空位的标签返回 false，宁可少画一个也不要把整片文字压成一团
+function placeLabel(placed, label, x, y, radius, size, view) {
+  var box = label.getBBox();
+  var width = box.width;
+  var height = box.height;
+  var gap = radius + size * 0.4;
+  var maxLeft = view[0] + view[2] - width;
+  var maxTop = view[1] + view[3] - height;
+  if (width > view[2] || height > view[3]) { return false; }
+
+  for (var step = 0; step < 12; step++) {
+    var shift = step * height * 0.8;
+    var spots = [
+      [x - width / 2, y + gap + step * height * 0.8],
+      [x - width / 2, y - gap - height - step * height * 0.8],
+      [x + gap + shift, y - height / 2],
+      [x - gap - width - shift, y - height / 2],
+    ];
+    for (var which = 0; which < spots.length; which++) {
+      var left = Math.min(Math.max(spots[which][0], view[0]), maxLeft);
+      var top = Math.min(Math.max(spots[which][1], view[1]), maxTop);
+      var clash = false;
+      for (var index = 0; index < placed.length && !clash; index++) {
+        var other = placed[index];
+        if (top < other.bottom && other.top < top + height && left < other.right && other.left < left + width) {
+          clash = true;
+        }
+      }
+      if (!clash) {
+        placed.push({ left: left, right: left + width, top: top, bottom: top + height });
+        label.setAttribute('transform', 'translate(' + (left - box.x) + ',' + (top - box.y) + ')');
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// 把落点名称与各端口速率画成多行文本，首行以原点为中心居中排布
+function labelText(lines, size) {
+  var text = document.createElementNS(SVG_NS, 'text');
+  text.setAttribute('class', 'label');
+  text.setAttribute('font-size', size);
+  text.setAttribute('stroke-width', size * 0.16);
+  lines.forEach(function(line, index) {
+    var tspan = document.createElementNS(SVG_NS, 'tspan');
+    tspan.setAttribute('x', 0);
+    tspan.setAttribute('y', index * size * 1.3);
+    if (!index) { tspan.setAttribute('class', 'place'); }
+    tspan.textContent = line;
+    text.appendChild(tspan);
+  });
+  return text;
+}
+
+// 宽屏下按窗口剩余高度收窄地图，避免整页出现滚动条
+function fitBox(box, view) {
+  var host = box.parentElement;
+  host.style.maxWidth = '';
+  if (window.matchMedia('(max-width: 640px)').matches || !box.clientWidth) { return; }
+  var section = box.closest('section');
+  var wrap = document.querySelector('.wrap');
+  if (!section || !wrap) { return; }
+
+  // 除地图外其他区块都占固定高度，先算出它们占掉的纵向空间
+  var others = 0;
+  Array.prototype.forEach.call(wrap.children, function(child) {
+    if (child === section || child.hidden) { return; }
+    var style = getComputedStyle(child);
+    others += child.getBoundingClientRect().height + (parseFloat(style.marginBottom) || 0);
+  });
+  var overhead = section.getBoundingClientRect().height - box.getBoundingClientRect().height;
+  var height = Math.max(wrap.clientHeight - others - overhead, MAP_MIN_HEIGHT);
+  var width = Math.floor(height * view[2] / view[3]);
+  // 收窄的是外层容器，缩放按钮才贴着地图右下角
+  if (width < box.clientWidth) { host.style.maxWidth = width + 'px'; }
+}
+
+// 重绘地图标记，底图只插入一次，后续只替换标记层
+function renderMap(items) {
+  if (document.getElementById('panel-map').hidden) { return; }
+  var box = document.getElementById('map-canvas');
+  if (!box.getAttribute('data-ready')) {
+    box.innerHTML = WORLD_MAP.svg;
+    box.setAttribute('data-ready', '1');
+  }
+  var svg = box.querySelector('svg');
+  if (!svg) { return; }
+  var layer = svg.querySelector('g.markers');
+  if (!layer) {
+    layer = document.createElementNS(SVG_NS, 'g');
+    layer.setAttribute('class', 'markers');
+    svg.appendChild(layer);
+  }
+  while (layer.firstChild) { layer.removeChild(layer.firstChild); }
+
+  var grouped = groupByPlace(items);
+  var keys = Object.keys(grouped.groups);
+  keys.sort(function(left, right) {
+    return grouped.groups[right].nodes.length - grouped.groups[left].nodes.length;
+  });
+
+  // 视口由缩放与平移状态决定，默认就是整幅世界地图
+  var view = mapView();
+  svg.setAttribute('viewBox', view.join(' '));
+  fitBox(box, view);
+  document.getElementById('zoom-reset').textContent = Math.round(mapZoom * 100) + '%';
+
+  // 底图被缩小后标记也会跟着变小，按屏幕像素留出半径与字号的下限
+  var unit = box.clientWidth > 0 ? view[2] / box.clientWidth : 1;
+  var labelSize = unit * 11;
+
+  var groups = keys.map(function(key) {
+    var group = grouped.groups[key];
+    // 圆点按屏幕像素定大小，底图被放大或缩小时观感一致
+    var radius = (4 + Math.sqrt(group.nodes.length) * 0.8) * unit;
+    return { key: key, group: group, radius: radius, summary: summarize(group) };
+  });
+  mapGroups = groups;
+
+  // 先把圆点占位，标签避开圆点时不会压住其他落点
+  var placed = groups.map(function(entry) {
+    var point = entry.group.point;
+    return {
+      left: point[0] - entry.radius, right: point[0] + entry.radius,
+      top: point[1] - entry.radius, bottom: point[1] + entry.radius,
+    };
+  });
+
+  var markers = {};
+  groups.forEach(function(entry) {
+    var group = entry.group;
+    var summary = entry.summary;
+    var radius = entry.radius;
+    var busy = summary.speed > 0;
+    var marker = document.createElementNS(SVG_NS, 'g');
+    marker.setAttribute('class', 'marker ' + summary.state + (busy ? ' busy' : ''));
+
+    var halo = document.createElementNS(SVG_NS, 'circle');
+    halo.setAttribute('cx', group.point[0]);
+    halo.setAttribute('cy', group.point[1]);
+    halo.setAttribute('r', radius * 1.5);
+    halo.setAttribute('class', 'halo');
+    marker.appendChild(halo);
+
+    // 每秒重建一次标记，波纹用负延迟接着上一帧的相位继续扩散
+    if (busy) {
+      var phase = Date.now() % 2000;
+      [0, 1000].forEach(function(offset) {
+        var ripple = document.createElementNS(SVG_NS, 'circle');
+        ripple.setAttribute('cx', group.point[0]);
+        ripple.setAttribute('cy', group.point[1]);
+        ripple.setAttribute('r', radius);
+        ripple.setAttribute('class', 'ripple');
+        ripple.style.strokeWidth = unit * 0.7;
+        ripple.style.animationDelay = '-' + ((phase + offset) % 2000) + 'ms';
+        marker.appendChild(ripple);
+      });
+    }
+
+    var dot = document.createElementNS(SVG_NS, 'circle');
+    dot.setAttribute('cx', group.point[0]);
+    dot.setAttribute('cy', group.point[1]);
+    dot.setAttribute('r', radius);
+    dot.setAttribute('class', 'dot');
+    dot.style.strokeWidth = unit * 0.9;
+    marker.appendChild(dot);
+    layer.appendChild(marker);
+    markers[entry.key] = marker;
+  });
+
+  // 速率标签只在悬停或选中的落点上画一个，其余落点只留圆点
+  var focus = mapHover || mapSelected;
+  var focused = null;
+  groups.forEach(function(entry) {
+    if (entry.key === focus) { focused = entry; }
+  });
+  if (focused) {
+    var lines = [focused.key].concat(labelLines(focused.group));
+    var label = labelText(lines, labelSize);
+    markers[focused.key].appendChild(label);
+    // 标签要先进 DOM 才量得到真实文本尺寸，放不下就整个去掉
+    if (!placeLabel(placed, label, focused.group.point[0], focused.group.point[1], focused.radius, labelSize, view)) {
+      markers[focused.key].removeChild(label);
+    }
+  }
+
+  var note = document.getElementById('map-note');
+  if (!items.length) {
+    note.textContent = '暂无节点接入';
+  } else if (grouped.unknown > 0) {
+    note.textContent = keys.length + ' 个落点，' + grouped.unknown + ' 个节点无法定位';
+  } else {
+    note.textContent = keys.length + ' 个落点';
+  }
+}
+
+// 用一次推送的数据重绘汇总、列表与地图，地图隐藏时不画
+function render(items) {
+  lastItems = items;
+  renderSummary(items);
+  renderNodes(items);
+  renderMap(items);
+}
+
+// 在地图与列表之间切换，同一时间只显示一个
+// 默认是列表，地图只在切过去时才按当前容器尺寸重绘
+function showPanel(name) {
+  var map = name === 'map';
+  document.getElementById('panel-map').hidden = !map;
+  document.getElementById('panel-list').hidden = map;
+  document.getElementById('tab-map').className = map ? 'tab active' : 'tab';
+  document.getElementById('tab-list').className = map ? 'tab' : 'tab active';
+  if (map) { bindMap(); renderMap(lastItems); }
+}
+
+document.getElementById('tab-map').addEventListener('click', function() {
+  showPanel('map');
+});
+document.getElementById('tab-list').addEventListener('click', function() {
+  showPanel('list');
+});
+
+// 横竖屏切换或改窗口大小后重新适配地图视口
+window.addEventListener('resize', function() {
+  if (!document.getElementById('panel-map').hidden) { renderMap(lastItems); }
+});
+
+// 实时推送的节点数据，断线后浏览器会自动重连
+var source = new EventSource(BASE + 'api/stream');
+source.addEventListener('message', function(event) {
+  var items = [];
+  try {
+    items = JSON.parse(event.data) || [];
+  } catch (error) {
+    return;
+  }
+  render(items);
+  document.getElementById('hint').textContent = '数据每秒实时推送';
+});
+source.addEventListener('error', function() {
+  document.getElementById('hint').textContent = '推送已断开，正在重连…';
+});
 </script>
 </body>
 </html>

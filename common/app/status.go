@@ -21,6 +21,7 @@ type NodeStatus struct {
 	Name          string    `json:"name"`          // 客户端显示名，只用于服务端日志与节点记录
 	Port          int       `json:"port"`          // 分配给该客户端的 SOCKS5 端口
 	State         NodeState `json:"state"`         // 当前状态
+	Place         string    `json:"place"`         // 地图落点键，与展示页底图的落点表同名，空串表示无法定位
 	Region        string    `json:"region"`        // 出口 IP 的归属地展示文本
 	Up            uint64    `json:"up"`            // 累计上行字节数，外部客户端发往目标方向
 	Down          uint64    `json:"down"`          // 累计下行字节数，目标返回给外部客户端方向

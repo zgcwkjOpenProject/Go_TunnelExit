@@ -552,13 +552,15 @@ func (s *Server) Nodes() []app.NodeStatus {
 	// 先按持久化记录铺开，再用手上的会话覆盖在线状态，两类节点都能出现
 	byID := make(map[string]app.NodeStatus, len(records)+len(sessions))
 	for id, record := range records {
+		place, region := s.regionOf(record.Address)
 		byID[id] = app.NodeStatus{
 			ID:       id,
 			Address:  record.Address,
 			Name:     record.Name,
 			Port:     record.Port,
 			State:    app.NodeStateOffline,
-			Region:   s.regionOf(record.Address),
+			Place:    place,
+			Region:   region,
 			Up:       record.Up,
 			Down:     record.Down,
 			LastSeen: record.LastSeen,
@@ -606,15 +608,15 @@ func statusRank(state app.NodeState) int {
 // 这类地址不在归属地库的收录范围内，直接查库只能得到保留值，对外展示局域网更有意义
 const PrivateRegion = "局域网"
 
-// regionOf 查询来源 IP 的归属地，内网地址固定显示局域网，库不可用或未收录时返回未知地区
-func (s *Server) regionOf(address string) string {
+// regionOf 返回来源地址的底图落点键与归属地展示文本，内网与保留地址没有落点
+func (s *Server) regionOf(address string) (string, string) {
 	if isPrivateAddress(address) {
-		return PrivateRegion
+		return "", PrivateRegion
 	}
 	if region, ok := s.geo.Lookup(address); ok {
-		return region.Display()
+		return region.Place(), region.Display()
 	}
-	return geoip.UnknownRegion
+	return "", geoip.UnknownRegion
 }
 
 // isPrivateAddress 判断地址是否属于本机、内网或链路本地范围，这类地址无需查库

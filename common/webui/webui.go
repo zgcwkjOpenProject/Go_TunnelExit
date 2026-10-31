@@ -1,6 +1,4 @@
-// webui 提供 Web 界面：服务端只对外展示节点状态，客户端只提供本机配置管理
-//
-// 界面只依赖 app 包，不反向引用 server 与 client，因此两个入口都能复用它
+// webui 提供 Web 界面：服务端只对外展示节点状态，客户端只提供本机配置管理，且不反向引用 server 与 client
 package webui
 
 import (
@@ -18,8 +16,6 @@ import (
 )
 
 // Mode 标记界面由服务端还是客户端拉起，两个角色挂载的路由完全不重叠
-//
-// 服务端界面只输出匿名节点展示页，客户端界面只输出本机配置管理页
 type Mode string
 
 // 界面角色取值
@@ -36,6 +32,7 @@ const (
 	maxConfigBody   = 64 * 1024              // 配置请求体大小上限
 	maxLogLines     = 2000                   // 单次返回的日志行数上限
 	defaultLogLines = 200                    // 未指定行数时返回的日志行数
+	streamInterval  = time.Second            // 实时推送两轮之间的间隔
 )
 
 // Options 是 Web 界面的启动参数
@@ -91,13 +88,14 @@ func (u *UI) routes() *http.ServeMux {
 	if u.opts.Mode == ModeServer {
 		// 服务端展示页与匿名节点接口均无需口令
 		mux.HandleFunc(base+"api/nodes", u.handleNodes)
-		mux.HandleFunc(base, u.handleStatus)
+		mux.HandleFunc(base+"api/stream", u.handleStream)
+		mux.HandleFunc(base, u.handlePage)
 		return mux
 	}
 	// 客户端页面与接口统一由口令保护
 	mux.Handle(base+"api/config", u.guard(http.HandlerFunc(u.handleConfig)))
 	mux.Handle(base+"api/log", u.guard(http.HandlerFunc(u.handleLog)))
-	mux.Handle(base, u.guard(http.HandlerFunc(u.handleConfigPage)))
+	mux.Handle(base, u.guard(http.HandlerFunc(u.handlePage)))
 	return mux
 }
 

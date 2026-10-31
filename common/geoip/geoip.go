@@ -44,12 +44,37 @@ const (
 // UnknownRegion 是查询不到归属地时的展示文本
 const UnknownRegion = "未知地区"
 
+// reservedCountry 是归属地库对保留地址使用的占位国名，这类地址没有地图落点
+const reservedCountry = "Reserved"
+
+// chineseProvinces 是国内省级行政区简称，与底图落点键同名，可按前缀匹配全称
+var chineseProvinces = []string{
+	"北京", "天津", "河北", "山西", "内蒙古", "辽宁", "吉林", "黑龙江",
+	"上海", "江苏", "浙江", "安徽", "福建", "江西", "山东", "河南",
+	"湖北", "湖南", "广东", "广西", "海南", "重庆", "四川", "贵州",
+	"云南", "西藏", "陕西", "甘肃", "青海", "宁夏", "新疆", "台湾",
+	"香港", "澳门",
+}
+
 // Region 是一条 IP 归属地记录
 type Region struct {
 	Country  string // 国家或地区
 	Province string // 省份、州或同级行政区
 	City     string // 城市
 	ISP      string // 运营商
+}
+
+// Place 返回底图落点键，国内取省份简称、境外取国家名，无法定位时返回空串
+func (r Region) Place() string {
+	if r.Country == "" || r.Country == reservedCountry || r.Country == emptyField {
+		return ""
+	}
+	for _, province := range chineseProvinces {
+		if strings.HasPrefix(r.Province, province) {
+			return province
+		}
+	}
+	return r.Country
 }
 
 // Display 把归属地拼成展示文本，缺失字段跳过，与已有字段重复的值只保留一次
