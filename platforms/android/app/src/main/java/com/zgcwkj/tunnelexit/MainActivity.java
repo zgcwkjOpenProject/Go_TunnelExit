@@ -67,13 +67,34 @@ public final class MainActivity extends Activity {
         }
     };
 
-    // 构建界面、申请通知权限并启动周期刷新
+    // 构建界面、申请通知权限、按已保存配置自动启动并开启周期刷新
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         setContentView(buildLayout());
         requestNotificationPermission();
+        autoStartIfNeeded();
         handler.post(refresh);
+    }
+
+    // 已保存的配置完整时打开应用自动启动，配置不完整则继续让用户填写
+    private void autoStartIfNeeded() {
+        if (TunnelService.isRunning()) {
+            return;
+        }
+        String host = TunnelConfig.serverHost(this);
+        String name = TunnelConfig.clientName(this);
+        String serverKey = TunnelConfig.serverKey(this);
+        if (host.isEmpty() || name.isEmpty() || serverKey.isEmpty()) {
+            return;
+        }
+        TunnelLog.clear();
+        TunnelLog.append("检测到已保存的密钥，自动启动客户端 → " + host);
+        try {
+            TunnelService.start(this);
+        } catch (Exception e) {
+            TunnelLog.append("自动启动失败：" + e.getMessage());
+        }
     }
 
     // 页面不可见时停止刷新，避免后台无谓地读日志

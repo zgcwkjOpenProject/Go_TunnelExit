@@ -19,9 +19,9 @@ const (
 	FrameLogin           FrameType = 3 // 客户端登录请求，payload 为 LoginRequest
 	FrameLoginResult     FrameType = 4 // 服务端登录应答，payload 为 LoginResult
 	FrameNewStream       FrameType = 5 // 服务端下发的新连接请求，payload 为 NewStreamRequest
-	FrameNewWorkConn     FrameType = 6 // 客户端在隧道连接首帧上报的归属信息，payload 为 NewWorkConn
-	FrameStreamClose     FrameType = 7 // 保留未使用：一条隧道流结束
-	FrameData            FrameType = 8 // 保留未使用：隧道流的原始字节
+	FrameNewWorkConn     FrameType = 6 // 客户端在隧道连接首帧上报的归属信息与建流回告，payload 为 NewWorkConn
+	FrameStreamClose     FrameType = 7 // 复用通道上一条隧道流结束，流标识在帧头
+	FrameData            FrameType = 8 // 复用通道上隧道流的原始字节，流标识在帧头
 	FrameWorkConnRequest FrameType = 9 // 服务端要求客户端补充空闲连接，payload 为 WorkConnRequest
 )
 
@@ -118,11 +118,12 @@ func ReadFrame(reader io.Reader) (Frame, error) {
 
 // LoginRequest 是客户端登录时上报的自身信息
 type LoginRequest struct {
-	ClientID string `json:"clientId"` // 客户端唯一标识，服务端结合来源 IP 为它固定分配 SOCKS5 端口
-	Name     string `json:"name"`     // 客户端显示名，只用于服务端日志与节点记录
-	Version  string `json:"version"`  // 客户端版本，仅用于日志与节点记录
-	Platform string `json:"platform"` // 客户端打包平台标识
-	PoolSize int    `json:"poolSize"` // 客户端希望维持的空闲连接数
+	ClientID string `json:"clientId"`      // 客户端唯一标识，服务端结合来源 IP 为它固定分配 SOCKS5 端口
+	Name     string `json:"name"`          // 客户端显示名，只用于服务端日志与节点记录
+	Version  string `json:"version"`       // 客户端版本，仅用于日志与节点记录
+	Platform string `json:"platform"`      // 客户端打包平台标识
+	PoolSize int    `json:"poolSize"`      // 客户端希望维持的空闲连接数
+	Mux      bool   `json:"mux,omitempty"` // 客户端是否支持多路复用，支持时服务端只维持少量载体连接
 }
 
 // LoginResult 是服务端返回的登录结果
@@ -136,18 +137,22 @@ type LoginResult struct {
 
 // NewStreamRequest 是服务端要求客户端建立一条出网连接的指令
 type NewStreamRequest struct {
-	StreamID uint64 `json:"streamId"` // 服务端分配的流标识
-	Host     string `json:"host"`     // SOCKS5 请求的目标地址
-	Port     int    `json:"port"`     // SOCKS5 请求的目标端口
+	StreamID uint64 `json:"streamId"`           // 服务端分配的流标识
+	Host     string `json:"host"`               // SOCKS5 请求的目标地址
+	Port     int    `json:"port"`               // SOCKS5 请求的目标端口
+	Compress bool   `json:"compress,omitempty"` // 服务端是否请求对该流启用压缩，客户端同意时回告置位
+	Mux      bool   `json:"mux,omitempty"`      // 服务端是否请求在该连接上多路复用，同意时回告必须置位
 }
 
 // NewWorkConn 是客户端在隧道连接首帧上报的归属信息
 type NewWorkConn struct {
-	ClientID string `json:"clientId"`         // 客户端唯一标识，服务端据此找到会话
-	StreamID uint64 `json:"streamId"`         // 目标流标识，控制流标识表示该连接加入空闲池
-	OK       bool   `json:"ok"`               // 本地出网连接是否建立成功
-	Error    string `json:"error,omitempty"`  // 建立失败时的原因，仅用于日志
-	Reason   string `json:"reason,omitempty"` // 建立失败的原因分类，服务端据此选择 SOCKS5 应答码
+	ClientID string `json:"clientId"`           // 客户端唯一标识，服务端据此找到会话
+	StreamID uint64 `json:"streamId"`           // 目标流标识，控制流标识表示该连接加入空闲池
+	OK       bool   `json:"ok"`                 // 本地出网连接是否建立成功
+	Error    string `json:"error,omitempty"`    // 建立失败时的原因，仅用于日志
+	Reason   string `json:"reason,omitempty"`   // 建立失败的原因分类，服务端据此选择 SOCKS5 应答码
+	Compress bool   `json:"compress,omitempty"` // 回告是否同意压缩，旧对端不认识该字段时保持未设置
+	Mux      bool   `json:"mux,omitempty"`      // 回告是否同意多路复用，同意后该连接转为复用载体
 }
 
 // WorkConnRequest 是服务端要求客户端补充空闲连接的指令

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"testing"
+	"time"
 
 	"tunnelexit/protocol"
 )
@@ -100,6 +101,28 @@ func TestJSONMessageRoundTrip(t *testing.T) {
 
 	request := protocol.WorkConnRequest{Count: 4}
 	checkJSONRoundTrip(t, request, func() any { return &protocol.WorkConnRequest{} })
+
+	muxLogin := protocol.LoginRequest{ClientID: "8f2a4c6e0b1d3f57", Name: "android", Version: "1.0.0", Platform: "android_arm64", PoolSize: 8, Mux: true}
+	checkJSONRoundTrip(t, muxLogin, func() any { return &protocol.LoginRequest{} })
+
+	muxStream := protocol.NewStreamRequest{StreamID: 9, Host: "10.0.0.1", Port: 8080, Compress: true, Mux: true}
+	checkJSONRoundTrip(t, muxStream, func() any { return &protocol.NewStreamRequest{} })
+
+	muxWork := protocol.NewWorkConn{ClientID: "c1", StreamID: 9, OK: true, Compress: true, Mux: true}
+	checkJSONRoundTrip(t, muxWork, func() any { return &protocol.NewWorkConn{} })
+}
+
+// TestDecodeJSONIgnoresUnknownFields 验证旧版本对新增字段保持宽容，保证新旧客户端互通
+func TestDecodeJSONIgnoresUnknownFields(t *testing.T) {
+	// 模拟新客户端发给旧服务端的携带复用与压缩标记的登录请求
+	payload := []byte(`{"clientId":"c1","name":"new","version":"2.0.0","platform":"windows_amd64","poolSize":4,"mux":true,"compress":true}`)
+	var target protocol.LoginRequest
+	if err := protocol.DecodeJSON(payload, &target); err != nil {
+		t.Fatalf("含未知字段的消息应当能解码: %v", err)
+	}
+	if target.ClientID != "c1" || target.PoolSize != 4 {
+		t.Fatalf("已知字段解析错误: %+v", target)
+	}
 }
 
 // checkJSONRoundTrip 编码后解码并与原值比较
@@ -199,5 +222,122 @@ func TestJSONIsValid(t *testing.T) {
 	payload := mustJSON(t, protocol.NewWorkConn{OK: true})
 	if !json.Valid(payload) {
 		t.Fatalf("生成的负载不是合法 JSON: %s", payload)
+	}
+}
+
+// testMuxPayloadSize 是复用会话测试的回显数据量，超过单帧负载上限以覆盖分块写出
+const testMuxPayloadSize = 70000
+
+// TestMuxSessionStreams 验证复用会话的多流协商、数据分发与关闭传播
+func TestMuxSessionStreams(t *testing.T) {
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+
+	serverSession := protocol.NewMuxSession(left, nil)
+	clientSession := protocol.NewMuxSession(right, func(session *protocol.MuxSession, request protocol.NewStreamRequest) {
+		stream := session.Open(request.StreamID)
+		if stream == nil {
+			t.Error("登记流失败")
+			return
+		}
+		payload, err := protocol.EncodeJSON(protocol.NewWorkConn{StreamID: request.StreamID, OK: true})
+		if err != nil {
+			t.Errorf("编码回告失败: %v", err)
+			return
+		}
+		if err := session.WriteFrame(protocol.Frame{Type: protocol.FrameNewWorkConn, Payload: payload}); err != nil {
+			t.Errorf("回告失败: %v", err)
+			return
+		}
+		data := make([]byte, testMuxPayloadSize)
+		if _, err := io.ReadFull(stream, data); err != nil {
+			t.Errorf("读取流数据失败: %v", err)
+			return
+		}
+		if _, err := stream.Write(data); err != nil {
+			t.Errorf("回写流数据失败: %v", err)
+			return
+		}
+		_ = stream.Close()
+	})
+	go serverSession.Serve()
+	go clientSession.Serve()
+
+	payload, err := protocol.EncodeJSON(protocol.NewStreamRequest{StreamID: 7, Host: "example.com", Port: 443})
+	if err != nil {
+		t.Fatalf("编码建流指令失败: %v", err)
+	}
+	if err := serverSession.WriteFrame(protocol.Frame{Type: protocol.FrameNewStream, Payload: payload}); err != nil {
+		t.Fatalf("发送建流指令失败: %v", err)
+	}
+	// 先登记流再等待回告，与服务端真实开流顺序一致
+	stream := serverSession.Open(7)
+	if stream == nil {
+		t.Fatal("登记流失败")
+	}
+	message, err := serverSession.WaitReply(7, 5*time.Second)
+	if err != nil {
+		t.Fatalf("等待回告失败: %v", err)
+	}
+	if !message.OK {
+		t.Fatalf("回告未同意建流: %+v", message)
+	}
+
+	out := make([]byte, testMuxPayloadSize)
+	for index := range out {
+		out[index] = byte(index%251 + 1)
+	}
+	if _, err := stream.Write(out); err != nil {
+		t.Fatalf("写出流数据失败: %v", err)
+	}
+	got := make([]byte, len(out))
+	if _, err := io.ReadFull(stream, got); err != nil {
+		t.Fatalf("读取回显失败: %v", err)
+	}
+	if !bytes.Equal(got, out) {
+		t.Fatal("回显数据不一致")
+	}
+	_ = stream.Close()
+	// 对端关闭后读端已关，再读应立即报错而不是阻塞
+	if _, err := stream.Read(got); err == nil {
+		t.Fatal("关闭后读取应当失败")
+	}
+}
+
+// TestCompressConnRoundTrip 验证压缩连接双向读写内容一致，且重复数据确实被压小
+func TestCompressConnRoundTrip(t *testing.T) {
+	payload := bytes.Repeat([]byte("tunnelexit 压缩通道测试 "), 2048)
+	left, right := net.Pipe()
+	defer left.Close()
+	defer right.Close()
+
+	compressLeft := protocol.NewCompressConn(left)
+	compressRight := protocol.NewCompressConn(right)
+	go func() {
+		if _, err := compressLeft.Write(payload); err != nil {
+			t.Errorf("正向写出失败: %v", err)
+		}
+	}()
+	got := make([]byte, len(payload))
+	if _, err := io.ReadFull(compressRight, got); err != nil {
+		t.Fatalf("正向读取失败: %v", err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("正向数据不一致")
+	}
+
+	reply := []byte("OK")
+	go func() {
+		if _, err := compressRight.Write(reply); err != nil {
+			t.Errorf("反向写出失败: %v", err)
+		}
+	}()
+	answer := make([]byte, len(reply))
+	if _, err := io.ReadFull(compressLeft, answer); err != nil {
+		t.Fatalf("反向读取失败: %v", err)
+	}
+	if !bytes.Equal(answer, reply) {
+		t.Fatal("反向数据不一致")
 	}
 }

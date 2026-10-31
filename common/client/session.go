@@ -3,6 +3,7 @@ package client
 
 import (
 	"errors"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -83,6 +84,7 @@ func (s *session) login() error {
 		Version:  app.Version(),
 		Platform: app.Platform(),
 		PoolSize: cfg.PoolSize,
+		Mux:      true,
 	}
 	payload, err := protocol.EncodeJSON(request)
 	if err != nil {
@@ -305,6 +307,10 @@ func (s *session) serveIdle(conn net.Conn) {
 				s.dropIdle(conn)
 				return
 			}
+			if request.Mux {
+				s.promoteMux(conn, request)
+				return
+			}
 			s.dispatchStream(conn, request)
 			return
 		default:
@@ -312,6 +318,109 @@ func (s *session) serveIdle(conn net.Conn) {
 			return
 		}
 	}
+}
+
+// dispatchStream 在指定数据连接上完成一次出网转发
+func (s *session) dispatchStream(conn net.Conn, request protocol.NewStreamRequest) {
+	// 转发期间连接不再属于空闲池，登记为活跃连接，会话结束时才能被统一关闭
+	s.addBusy(conn)
+	defer s.dropBusy(conn)
+	target, reason, err := dialTarget(request.Host, request.Port, dialTimeout)
+	if err != nil {
+		s.reportFailure(conn, request.StreamID, reason, err)
+		return
+	}
+	if err := s.handoff(conn, request, target); err != nil {
+		app.Logf("client", "隧道流 %d 交付失败: %v", request.StreamID, err)
+	}
+}
+
+// promoteMux 把空闲连接升级为多路复用载体，并把建流指令附带的首条流拨号交付
+func (s *session) promoteMux(conn net.Conn, request protocol.NewStreamRequest) {
+	target, reason, err := dialTarget(request.Host, request.Port, dialTimeout)
+	if err != nil {
+		// 首条流拨号失败就按普通建流失败回告，连接随之关闭，服务端会换一条空闲连接重试
+		s.reportFailure(conn, request.StreamID, reason, err)
+		return
+	}
+	raw := conn
+	if request.Compress {
+		conn = protocol.NewCompressConn(conn)
+	}
+	carrier := protocol.NewMuxSession(conn, s.handleMuxNewStream)
+	// 先登记流再回告，服务端回告后立即写出的数据帧不会因为查无此流被丢弃
+	stream := carrier.Open(request.StreamID)
+	if stream == nil {
+		_ = raw.Close()
+		_ = target.Close()
+		return
+	}
+	payload, err := protocol.EncodeJSON(protocol.NewWorkConn{
+		ClientID: s.clientID,
+		StreamID: request.StreamID,
+		OK:       true,
+		Compress: request.Compress,
+		Mux:      true,
+	})
+	if err != nil {
+		_ = raw.Close()
+		_ = target.Close()
+		return
+	}
+	_ = raw.SetWriteDeadline(time.Now().Add(handshakeTimeout))
+	if err := protocol.WriteFrame(raw, protocol.Frame{Type: protocol.FrameNewWorkConn, Payload: payload}); err != nil {
+		_ = raw.Close()
+		_ = target.Close()
+		return
+	}
+	_ = raw.SetWriteDeadline(time.Time{})
+	// 回告之后连接离开空闲池，登记为在用连接，会话收尾时统一关闭
+	s.addBusy(raw)
+	// 转发协程独立运行，载体读取协程退出时流被关闭，转发随之结束
+	go relay(stream, target)
+	// Serve 返回即载体结束，会话收尾关闭连接后从这里退出
+	carrier.Serve()
+	s.dropBusy(raw)
+}
+
+// handleMuxNewStream 处理复用载体上的建流指令
+//
+// 由载体读取协程异步调用，拨号不会阻塞同一载体上的其他流
+func (s *session) handleMuxNewStream(carrier *protocol.MuxSession, request protocol.NewStreamRequest) {
+	s.serveMuxStream(carrier, request)
+}
+
+// serveMuxStream 在复用载体上完成单条流的拨号与转发
+func (s *session) serveMuxStream(carrier *protocol.MuxSession, request protocol.NewStreamRequest) {
+	target, reason, err := dialTarget(request.Host, request.Port, dialTimeout)
+	if err != nil {
+		message := protocol.NewWorkConn{
+			ClientID: s.clientID,
+			StreamID: request.StreamID,
+			OK:       false,
+			Reason:   reason,
+			Error:    err.Error(),
+		}
+		s.replyMux(carrier, message)
+		return
+	}
+	// 先登记流再回告，服务端回告后立即写出的数据帧不会因为查无此流被丢弃
+	stream := carrier.Open(request.StreamID)
+	if stream == nil {
+		_ = target.Close()
+		return
+	}
+	s.replyMux(carrier, protocol.NewWorkConn{ClientID: s.clientID, StreamID: request.StreamID, OK: true})
+	relay(stream, target)
+}
+
+// replyMux 在复用载体上回告建流结果，载体已关闭时静默放弃
+func (s *session) replyMux(carrier *protocol.MuxSession, message protocol.NewWorkConn) {
+	payload, err := protocol.EncodeJSON(message)
+	if err != nil {
+		return
+	}
+	_ = carrier.WriteFrame(protocol.Frame{Type: protocol.FrameNewWorkConn, Payload: payload})
 }
 
 // dropIdle 从空闲池移除并关闭一条数据连接
@@ -334,21 +443,6 @@ func (s *session) removeIdleLocked(conn net.Conn) {
 			s.idleConns = append(s.idleConns[:i], s.idleConns[i+1:]...)
 			break
 		}
-	}
-}
-
-// dispatchStream 在指定数据连接上完成一次出网转发
-func (s *session) dispatchStream(conn net.Conn, request protocol.NewStreamRequest) {
-	// 转发期间连接不再属于空闲池，登记为活跃连接，会话结束时才能被统一关闭
-	s.addBusy(conn)
-	defer s.dropBusy(conn)
-	target, reason, err := dialTarget(request.Host, request.Port, dialTimeout)
-	if err != nil {
-		s.reportFailure(conn, request.StreamID, reason, err)
-		return
-	}
-	if err := s.handoff(conn, request.StreamID, target); err != nil {
-		app.Logf("client", "隧道流 %d 交付失败: %v", request.StreamID, err)
 	}
 }
 
@@ -397,8 +491,10 @@ func (s *session) reportFailure(conn net.Conn, streamID uint64, reason string, c
 }
 
 // handoff 向服务端确认建流成功并把数据连接与本地目标连接对接
-func (s *session) handoff(conn net.Conn, streamID uint64, target net.Conn) error {
-	message := protocol.NewWorkConn{ClientID: s.clientID, StreamID: streamID, OK: true}
+//
+// 服务端在建流指令中请求压缩时回告同意，回告帧之后的数据按压缩通道转发
+func (s *session) handoff(conn net.Conn, request protocol.NewStreamRequest, target net.Conn) error {
+	message := protocol.NewWorkConn{ClientID: s.clientID, StreamID: request.StreamID, OK: true, Compress: request.Compress}
 	payload, err := protocol.EncodeJSON(message)
 	if err != nil {
 		_ = conn.Close()
@@ -412,12 +508,15 @@ func (s *session) handoff(conn net.Conn, streamID uint64, target net.Conn) error
 		return err
 	}
 	_ = conn.SetWriteDeadline(time.Time{})
+	if request.Compress {
+		conn = protocol.NewCompressConn(conn)
+	}
 	relay(conn, target)
 	return nil
 }
 
 // relay 在两个方向之间复制字节，任一端结束即整体关闭
-func relay(left net.Conn, right net.Conn) {
+func relay(left io.ReadWriteCloser, right io.ReadWriteCloser) {
 	var once sync.Once
 	closer := func() {
 		_ = left.Close()
@@ -439,7 +538,7 @@ func relay(left net.Conn, right net.Conn) {
 }
 
 // copyBuffer 单向复制数据，出错时静默结束
-func copyBuffer(dst net.Conn, src net.Conn) {
+func copyBuffer(dst io.ReadWriteCloser, src io.ReadWriteCloser) {
 	buffer := make([]byte, bufferSize)
 	for {
 		n, err := src.Read(buffer)

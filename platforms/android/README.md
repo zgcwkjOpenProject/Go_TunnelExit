@@ -44,7 +44,8 @@ android/
     └── src/main/
         ├── AndroidManifest.xml  # 权限、Activity、前台服务
         ├── java/com/zgcwkj/tunnelexit/
-        │   ├── MainActivity.java     # 主界面：配置、启停、日志
+        │   ├── MainActivity.java     # 主界面：配置、启停、日志、打开即自动启动
+        │   ├── BootReceiver.java     # 开机自启：配置完整时拉起隧道服务
         │   ├── TunnelService.java    # 前台服务：托管客户端进程
         │   ├── TunnelConfig.java     # 配置读写（SharedPreferences → client.json）
         │   └── TunnelLog.java        # 内存日志环形缓冲

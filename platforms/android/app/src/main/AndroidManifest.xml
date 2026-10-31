@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 长连接需要在息屏后继续存活 -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 开机自启需要在系统启动完成后收到广播 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -32,5 +34,14 @@
             android:name=".TunnelService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- 开机自启只接收系统广播，配置完整时自动拉起隧道服务 -->
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

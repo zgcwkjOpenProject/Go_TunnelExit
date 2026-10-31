@@ -312,7 +312,7 @@ func (s *Server) register(conn net.Conn, request protocol.LoginRequest) (*Client
 		return nil, fmt.Errorf("监听 SOCKS5 端口 %d 失败: %w", port, err)
 	}
 	id := request.ClientID
-	session := NewClientSession(s, id, name, address, request.Version, request.Platform, port, conn)
+	session := NewClientSession(s, id, name, address, request.Version, request.Platform, port, request.Mux, conn)
 	s.sessions[id] = session
 	s.listeners[port] = &clientListener{port: port, listener: listener, clientID: id}
 	s.mu.Unlock()
