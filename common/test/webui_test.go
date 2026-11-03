@@ -1,4 +1,6 @@
-// webui_test 通过真实监听端口验证界面接口：服务端匿名展示、客户端配置读写、口令校验与日志接口
+// webui_test 通过真实监听端口验证界面接口
+//
+// 覆盖服务端匿名节点展示、客户端配置读写、口令校验与日志接口，并确认展示接口不泄露来源 IP 与客户端名
 package test
 
 import (
@@ -276,9 +278,8 @@ func TestWebUIRejectsBrokenConfig(t *testing.T) {
 }
 
 // TestWebUIClientConfig 验证客户端配置接口写入隧道参数
-//
-// 请求体里带上界面监听参数也不会生效：改它们会让配置页本身失去访问地址
 func TestWebUIClientConfig(t *testing.T) {
+	// 请求体里带上界面监听参数也不会生效：改它们会让配置页本身失去访问地址
 	clearTunnelEnv(t)
 	appDir := t.TempDir()
 	base := startUI(t, webui.ModeClient, appDir)

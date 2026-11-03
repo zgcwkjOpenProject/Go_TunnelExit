@@ -1,4 +1,7 @@
 // server 实现隧道服务端：客户端登录、SOCKS5 端口分配与流调度
+//
+// 只监听一个隧道端口，首个帧是登录还是补池连接决定分派分支
+// 出网流程固定为取空闲连接、下发建流指令、等待回告，成功转数据通道，失败映射应答码
 package server
 
 import (
@@ -32,8 +35,6 @@ const (
 var ErrServerClosed = errors.New("隧道服务端已停止")
 
 // ErrClientAddressBusy 表示同一客户端 ID 正从其他来源地址在线，本次登录被拒绝
-//
-// 客户端身份由 ID 与来源 IP 共同确定，复制客户端配置到别的机器顶不掉正在运行的真客户端
 var ErrClientAddressBusy = errors.New("该客户端 ID 正在其他来源地址上运行，待它断开后即可重新接入")
 
 // clientListener 是分配给某个客户端的 SOCKS5 监听
@@ -44,9 +45,6 @@ type clientListener struct {
 }
 
 // Server 是隧道服务端，协调客户端会话与 SOCKS5 端口
-//
-// 客户端身份由唯一 ID 与来源 IP 共同确定，SOCKS5 端口按这对组合固定分配；
-// 隧道端口只接受 TLS 连接，非法或未加密的连接在握手段即被丢弃
 type Server struct {
 	cfg       app.ServerConfig          // 启动时确定的服务端配置
 	store     *NodeStore                // 客户端与 SOCKS5 端口、流量统计的映射
@@ -61,9 +59,8 @@ type Server struct {
 }
 
 // New 创建隧道服务端
-//
-// 密钥对由调用方提前装载，装载失败时无法建立加密隧道，因此这里要求必须传入
 func New(cfg app.ServerConfig, appDir string, certificate tls.Certificate) *Server {
+	// 密钥对由调用方提前装载，装载失败时无法建立加密隧道，因此这里要求必须传入
 	store := NewNodeStore(filepath.Join(appDir, app.ClientsStoreFile))
 	if err := store.Load(); err != nil {
 		app.Logf("server", "读取节点记录失败，将重新分配端口: %v", err)
@@ -79,10 +76,9 @@ func New(cfg app.ServerConfig, appDir string, certificate tls.Certificate) *Serv
 }
 
 // openGeoIP 装载 IPv4 与 IPv6 两份离线归属地库
-//
-// 两份库各自缺失或损坏只影响对应地址族的展示，服务端只记日志不退出
 func openGeoIP(appDir string) *geoip.Library {
 	library := geoip.NewLibrary()
+	// 两份库各自缺失或损坏只影响对应地址族的展示，服务端只记日志不退出
 	for _, path := range []string{app.GeoIPPath(appDir), app.GeoIPPathV6(appDir)} {
 		if err := library.Load(path); err != nil {
 			app.Logf("server", "归属地库 %s 不可用，该地址族的来源显示未知地区: %v", path, err)
@@ -267,14 +263,13 @@ func (s *Server) writeLoginResult(conn net.Conn, result protocol.LoginResult) er
 }
 
 // register 登记客户端会话并为其准备 SOCKS5 监听
-//
-// 同一 ID 从原地址重连时新会话接管旧会话并复用原端口，旧会话仍在线时来自其他地址的登录一律拒绝
 func (s *Server) register(conn net.Conn, request protocol.LoginRequest) (*ClientSession, error) {
 	name := strings.TrimSpace(request.Name)
 	if name == "" {
 		name = "client"
 	}
 	address := remoteAddress(conn)
+	// 同一 ID 从原地址重连时新会话接管旧会话并复用原端口，旧会话仍在线时来自其他地址的登录一律拒绝
 	s.mu.Lock()
 	existing, online := s.sessions[request.ClientID]
 	// 旧会话还在时只认原来源地址，否则拿到客户端 ID 的人都能从任意机器顶掉真客户端
@@ -285,9 +280,7 @@ func (s *Server) register(conn net.Conn, request protocol.LoginRequest) (*Client
 		return nil, ErrClientAddressBusy
 	}
 	// 同 ID 从原地址重连时先摘掉旧会话与其端口，避免同一客户端占用两个端口
-	//
-	// 这里只从映射中摘除并关掉监听，真正的会话关闭必须放到解锁之后：
-	// Close 会回调 release 再去抢同一把锁，锁内关闭会直接死锁
+	// 这里只从映射中摘除并关掉监听，真正的会话关闭放到解锁之后，否则 Close 回调 release 会与这把锁死锁
 	var stale []*ClientSession
 	if online {
 		delete(s.sessions, request.ClientID)
@@ -350,10 +343,10 @@ func (s *Server) serveSocks(listener net.Listener, session *ClientSession) {
 }
 
 // handleSocks 处理一条 SOCKS5 连接并把出网请求交给对应客户端
-//
-// 外部客户端与目标之间的双向数据都经过这条连接，因此在这里统计双向流量
 func (s *Server) handleSocks(conn net.Conn, session *ClientSession) {
+	// 外部客户端与目标之间的双向数据都经过这条连接，因此在这里统计双向流量
 	remote := conn.RemoteAddr().String()
+	// 流量随读写实时计入，展示页按秒差分的即时速率才能在连接存续期间保持连续
 	traffic := &trafficConn{Conn: conn, session: session}
 	err := socks5.Handle(traffic, session.Dial)
 	_ = conn.Close()
@@ -362,15 +355,13 @@ func (s *Server) handleSocks(conn net.Conn, session *ClientSession) {
 	}
 }
 
-// trafficConn 包装对外 SOCKS5 连接并统计双向字节数
-//
-// 只嵌入 net.Conn，不实现 ReaderFrom 或 WriterTo，使 io.Copy 的两个方向都落到下面的读写方法上
+// trafficConn 包装对外 SOCKS5 连接并统计双向流量
 type trafficConn struct {
 	net.Conn                // 原始连接
 	session  *ClientSession // 流量归属的客户端会话
 }
 
-// Read 读取外部客户端数据并计入上行
+// Read 读取外部客户端数据并把上行字节数实时计入
 func (t *trafficConn) Read(buffer []byte) (int, error) {
 	read, err := t.Conn.Read(buffer)
 	if read > 0 {
@@ -379,7 +370,7 @@ func (t *trafficConn) Read(buffer []byte) (int, error) {
 	return read, err
 }
 
-// Write 向外写回目标数据并计入下行
+// Write 向外写回目标数据并把下行字节数实时计入
 func (t *trafficConn) Write(buffer []byte) (int, error) {
 	written, err := t.Conn.Write(buffer)
 	if written > 0 {
@@ -389,10 +380,9 @@ func (t *trafficConn) Write(buffer []byte) (int, error) {
 }
 
 // remoteAddress 取连接的来源 IP，解析失败时退回原始地址
-//
-// 双栈监听下 IPv4 客户端可能以 IPv4 映射地址呈现，归一化后记录、判重与展示都是同一种写法
 func remoteAddress(conn net.Conn) string {
 	address := conn.RemoteAddr().String()
+	// 双栈监听下 IPv4 客户端可能以 IPv4 映射地址呈现，归一化后记录、判重与展示都是同一种写法
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		return address
@@ -413,8 +403,6 @@ func normalizeAddress(address string) string {
 }
 
 // handleIdleConn 接纳客户端预建的空闲数据连接
-//
-// 空闲连接与登录连接共用隧道端口，只有来源地址与该会话绑定的地址一致的连接才会被接纳
 func (s *Server) handleIdleConn(conn net.Conn, frame protocol.Frame) {
 	var message protocol.NewWorkConn
 	if err := protocol.DecodeJSON(frame.Payload, &message); err != nil {
@@ -455,9 +443,8 @@ func (s *Server) sessionByID(id string) *ClientSession {
 }
 
 // allocatePortLocked 为客户端分配 SOCKS5 端口，优先复用历史分配
-//
-// 端口只能落在配置的范围内，分配可能改动记录，落盘交由调用方在解锁后执行
 func (s *Server) allocatePortLocked(clientID string, address string, name string) (int, error) {
+	// 端口只能落在配置的范围内，分配可能改动记录，落盘交由调用方在解锁后执行
 	used := make(map[int]bool, len(s.listeners))
 	for port := range s.listeners {
 		used[port] = true
@@ -509,9 +496,8 @@ func (s *Server) release(session *ClientSession) {
 }
 
 // saveNodes 落盘节点记录，只能在不持有 s.mu 时调用
-//
-// 记录写入涉及磁盘 I/O，放在锁内会连带阻塞登录与会话收尾；停止后不再落盘，避免与 Stop 的收尾写入争抢文件
 func (s *Server) saveNodes() {
+	// 记录写入涉及磁盘 I/O，放在锁内会连带阻塞登录与会话收尾；停止后不再落盘，避免与 Stop 的收尾写入争抢文件
 	if s.closed.Load() {
 		return
 	}
@@ -535,10 +521,8 @@ func (s *Server) ActiveClientCount() int {
 }
 
 // Nodes 汇总全部节点状态，供节点展示页展示在线、建立中与离线节点
-//
-// 结果按状态分组，组内按 SOCKS5 端口升序
-// 返回结果含来源 IP 与名称，属于可识别数据，公开接口必须只取其匿名字段
 func (s *Server) Nodes() []app.NodeStatus {
+	// 返回结果含来源 IP 与名称，属于可识别数据，公开接口必须只取其匿名字段
 	records := s.store.Snapshot()
 	s.mu.Lock()
 	sessions := make([]*ClientSession, 0, len(s.sessions))
@@ -580,6 +564,7 @@ func (s *Server) Nodes() []app.NodeStatus {
 	for _, status := range byID {
 		statuses = append(statuses, status)
 	}
+	// 结果按状态分组，组内按 SOCKS5 端口升序
 	sort.Slice(statuses, func(i, j int) bool {
 		if statuses[i].State != statuses[j].State {
 			return statusRank(statuses[i].State) < statusRank(statuses[j].State)
@@ -602,8 +587,6 @@ func statusRank(state app.NodeState) int {
 }
 
 // PrivateRegion 是内网与本机来源地址的归属地展示文本
-//
-// 这类地址不在归属地库的收录范围内，直接查库只能得到保留值，对外展示局域网更有意义
 const PrivateRegion = "局域网"
 
 // regionOf 返回来源地址的底图落点键与归属地展示文本，内网与保留地址没有落点

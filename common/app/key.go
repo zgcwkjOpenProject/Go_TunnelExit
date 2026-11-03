@@ -1,7 +1,7 @@
 // key 负责服务端密钥对的生成与装载，并给出两端共用的 TLS 配置
 //
-// 服务端首次启动生成 RSA 密钥对与自签名证书，客户端只凭服务端公钥确认对端身份，
-// 因此隧道端口只承载 TLS 连接，登录帧与数据帧都跑在加密通道里，非法数据进不到协议层
+// 私钥、自签名证书与公钥都落在运行目录下的 keys 子目录，首次启动生成后一直复用
+// 客户端只按公钥确认服务端身份，公钥不匹配、缺失或无法解析都属于不会自愈的错误
 package app
 
 import (
@@ -62,10 +62,8 @@ func ServerPublicKeyPath(appDir string) string {
 }
 
 // LoadServerKey 装载服务端密钥对，文件缺失或损坏时重新生成
-//
-// 公钥同时写入公钥文件供用户复制，generated 为 true 表示本次新生成，
-// 沿用旧公钥的客户端必须重新填写新公钥才能接入
 func LoadServerKey(appDir string) (tls.Certificate, string, bool, error) {
+	// generated 为 true 表示本次新生成，沿用旧公钥的客户端必须重新填写新公钥才能接入
 	keyPath := ServerKeyPath(appDir)
 	certPath := ServerCertPath(appDir)
 	certificate, err := tls.LoadX509KeyPair(certPath, keyPath)
@@ -114,6 +112,7 @@ func PublicKeyText(certificate tls.Certificate) (string, error) {
 
 // generateServerKey 生成 RSA 密钥对与自签名证书，连同公钥一起写入密钥目录
 func generateServerKey(appDir string) (tls.Certificate, string, bool, error) {
+	// 客户端只凭公钥确认对端身份，因此隧道端口只承载 TLS 连接，协议帧都跑在加密通道里
 	key, err := rsa.GenerateKey(rand.Reader, rsaKeyBits)
 	if err != nil {
 		return tls.Certificate{}, "", false, fmt.Errorf("生成 RSA 密钥失败: %w", err)
@@ -157,10 +156,8 @@ func generateServerKey(appDir string) (tls.Certificate, string, bool, error) {
 }
 
 // ServerTLSConfig 返回隧道端口的服务端 TLS 配置
-//
-// 客户端不必提交证书，密钥校验在握手之后的登录阶段按公钥比对完成，
-// 因此握手本身保持轻量，且校验结果能通过登录应答把具体原因回告客户端
 func ServerTLSConfig(certificate tls.Certificate) *tls.Config {
+	// 客户端不必提交证书，密钥校验在握手之后的登录阶段按公钥比对完成，握手本身保持轻量
 	return &tls.Config{
 		Certificates: []tls.Certificate{certificate},
 		MinVersion:   tls.VersionTLS12,
@@ -168,8 +165,6 @@ func ServerTLSConfig(certificate tls.Certificate) *tls.Config {
 }
 
 // ClientTLSConfig 返回客户端连接隧道端口的 TLS 配置，按服务端公钥校验对端身份
-//
-// 服务端证书是自签名的，因此跳过系统根证书校验，改用配置页填写的公钥与对端证书公钥逐字节比对
 func ClientTLSConfig(publicKeyText string) (*tls.Config, error) {
 	publicKey, err := ParsePublicKey(publicKeyText)
 	if err != nil {
@@ -230,8 +225,7 @@ func ParsePublicKey(text string) (any, error) {
 }
 
 // IsKeyError 判断错误是否由客户端公钥不可用引起
-//
-// 这类错误按退避策略重试不会自愈，只能由用户改配置，调用方据此改用固定间隔重试并保持进程
 func IsKeyError(err error) bool {
+	// 这类错误按退避策略重试不会自愈，只能由用户改配置，调用方据此改用固定间隔重试并保持进程
 	return errors.Is(err, ErrKeyMissing) || errors.Is(err, ErrKeyInvalid) || errors.Is(err, ErrKeyMismatch)
 }

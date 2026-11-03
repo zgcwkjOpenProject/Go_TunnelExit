@@ -1,4 +1,8 @@
-// log 提供带时间戳的应用日志：历史日志按天归档，早于保留天数的归档在启动与跨天时删除
+// log 提供带时间戳的应用日志
+//
+// 运行日志落在运行目录下的 logs 子目录，跨天时把前一天的文件改名归档，
+// 早于保留天数的归档在启动与跨天时删除，因此日志不会无限增长
+// 仅当标准输出连着终端时才同步打印，套件启动脚本重定向后不会每行重复
 package app
 
 import (
@@ -37,9 +41,8 @@ var terminal = struct {
 }{}
 
 // isTerminal 判断标准输出是否直接连着终端
-//
-// 重定向到文件或管道时只写文件，否则套件启动脚本会把标准输出追加到同一个日志文件造成每行重复
 func isTerminal() bool {
+	// 重定向到文件或管道时只写文件，否则套件启动脚本会把标准输出追加到同一个日志文件造成每行重复
 	terminal.Do(func() {
 		info, err := os.Stdout.Stat()
 		terminal.enabled = err == nil && info.Mode()&os.ModeCharDevice != 0
@@ -123,22 +126,20 @@ func CloseLogging() {
 }
 
 // openLocked 以追加方式打开日志文件，并记下它覆盖的日期
-//
-// 调用方必须已持有 logger 锁，写入前记下日期是为了跨天时能归档出当天对应的文件名
 func (l *logState) openLocked() error {
 	file, err := os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
 	}
 	l.file = file
+	// 调用方必须已持有 logger 锁，写入前记下日期是为了跨天时能归档出当天对应的文件名
 	l.date = time.Now().Format(logDateLayout)
 	return nil
 }
 
 // rotateLocked 在跨天时把当前日志归档，随后打开新一天的文件
-//
-// 调用方必须已持有 logger 锁且日志文件已打开，按天归档让保留天数有明确含义
 func (l *logState) rotateLocked() {
+	// 调用方必须已持有 logger 锁且日志文件已打开，按天归档让保留天数有明确含义
 	today := time.Now().Format(logDateLayout)
 	if l.date == today {
 		return
@@ -153,9 +154,6 @@ func (l *logState) rotateLocked() {
 }
 
 // archiveLocked 把当前日志文件按最后写入日期改名归档
-//
-// 日期取自文件修改时间而不是上次打开时间：停机跨天后重启归档的是停机前的日志，
-// 同一天内重启则继续追加同一个文件，一天最多留下一个归档
 func (l *logState) archiveLocked() {
 	info, err := os.Stat(l.path)
 	if err != nil {
@@ -165,6 +163,8 @@ func (l *logState) archiveLocked() {
 		_ = os.Remove(l.path)
 		return
 	}
+	// 日期取自文件修改时间而不是上次打开时间，停机跨天后重启归档的是停机前的日志
+	// 同一天内重启则继续追加同一个文件，一天最多留下一个归档
 	written := info.ModTime()
 	if written.Format(logDateLayout) == time.Now().Format(logDateLayout) {
 		return
@@ -183,13 +183,12 @@ func (l *logState) archivePath(written time.Time) string {
 }
 
 // pruneLocked 删除早于保留天数的归档日志
-//
-// 只清理本程序命名的归档文件，目录里其他文件一律不动
 func (l *logState) pruneLocked(now time.Time) {
 	if l.keepDays <= 0 {
 		return
 	}
 	base := strings.TrimSuffix(filepath.Base(l.path), logSuffix)
+	// 只清理本程序命名的归档文件，目录里其他文件一律不动
 	matches, err := filepath.Glob(filepath.Join(filepath.Dir(l.path), base+"-*"+logSuffix))
 	if err != nil {
 		return

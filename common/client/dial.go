@@ -1,4 +1,6 @@
 // dial 负责客户端本地出网拨号，并把失败原因归类上报给服务端
+//
+// 归类结果由服务端映射成 SOCKS5 应答码，外部客户端据此看到端口拒绝、不可达等具体原因
 package client
 
 import (
@@ -12,9 +14,8 @@ import (
 )
 
 // dialTarget 在本地建立到目标地址的连接
-//
-// 返回的 reason 用于让服务端选择对应的 SOCKS5 应答码
 func dialTarget(host string, port int, timeout time.Duration) (net.Conn, string, error) {
+	// 返回的 reason 用于让服务端选择对应的 SOCKS5 应答码
 	address := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {

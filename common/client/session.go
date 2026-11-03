@@ -1,4 +1,6 @@
 // session 实现客户端单次连接的生命周期：登录、空闲连接池与隧道流转发
+//
+// 会话收尾时连同空闲连接与正在转发的活跃连接一起关闭，避免转发协程卡在旧会话上
 package client
 
 import (
@@ -24,9 +26,7 @@ const (
 	fillRetryInterval = time.Second      // 补池失败后的重试间隔
 )
 
-// session 表示客户端与服务端之间的一次会话
-//
-// 空闲连接池由服务端单向驱动：服务端按需下发补池请求，客户端建立对应数量的数据连接推送过去
+// session 表示客户端与服务端之间的一次会话，空闲连接池由服务端下发补池请求驱动
 type session struct {
 	client       *Client        // 所属客户端
 	conn         net.Conn       // 登录连接
@@ -126,9 +126,8 @@ func (s *session) login() error {
 }
 
 // readLoop 读取控制连接上的指令直到连接结束
-//
-// 新流不再由控制连接下发：服务端直接在空闲数据连接上写入建流指令
 func (s *session) readLoop() {
+	// 新流不再由控制连接下发，服务端直接在空闲数据连接上写入建流指令
 	for {
 		_ = s.conn.SetReadDeadline(time.Now().Add(heartbeatTimeout))
 		frame, err := protocol.ReadFrame(s.conn)
@@ -266,9 +265,8 @@ func (s *session) addIdleConn(count int) error {
 }
 
 // announceIdle 在新建的空闲连接上首帧上报归属
-//
-// 登录连接与空闲连接共用一个隧道端口，服务端按首帧类型区分
 func (s *session) announceIdle(conn net.Conn) error {
+	// 登录连接与空闲连接共用一个隧道端口，服务端按首帧类型区分
 	payload, err := protocol.EncodeJSON(protocol.NewWorkConn{
 		ClientID: s.clientID,
 		StreamID: protocol.MainStreamID,
@@ -286,9 +284,8 @@ func (s *session) announceIdle(conn net.Conn) error {
 }
 
 // serveIdle 等待服务端沿该数据连接下发建流指令
-//
-// 指令到达后本协程转为该隧道流的转发协程，连接所有权随之移交
 func (s *session) serveIdle(conn net.Conn) {
+	// 指令到达后本协程转为该隧道流的转发协程，连接所有权随之移交
 	defer s.wg.Done()
 	for {
 		frame, err := protocol.ReadFrame(conn)
@@ -384,9 +381,8 @@ func (s *session) promoteMux(conn net.Conn, request protocol.NewStreamRequest) {
 }
 
 // handleMuxNewStream 处理复用载体上的建流指令
-//
-// 由载体读取协程异步调用，拨号不会阻塞同一载体上的其他流
 func (s *session) handleMuxNewStream(carrier *protocol.MuxSession, request protocol.NewStreamRequest) {
+	// 由载体读取协程异步调用，拨号不会阻塞同一载体上的其他流
 	s.serveMuxStream(carrier, request)
 }
 
@@ -447,9 +443,8 @@ func (s *session) removeIdleLocked(conn net.Conn) {
 }
 
 // addBusy 把连接移出空闲池并登记为正在转发的活跃连接
-//
-// 摘除与登记必须在一把锁内完成，否则会话收尾可能两边都看不到这条连接
 func (s *session) addBusy(conn net.Conn) {
+	// 摘除与登记必须在一把锁内完成，否则会话收尾可能两边都看不到这条连接
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.removeIdleLocked(conn)
@@ -491,8 +486,6 @@ func (s *session) reportFailure(conn net.Conn, streamID uint64, reason string, c
 }
 
 // handoff 向服务端确认建流成功并把数据连接与本地目标连接对接
-//
-// 服务端在建流指令中请求压缩时回告同意，回告帧之后的数据按压缩通道转发
 func (s *session) handoff(conn net.Conn, request protocol.NewStreamRequest, target net.Conn) error {
 	message := protocol.NewWorkConn{ClientID: s.clientID, StreamID: request.StreamID, OK: true, Compress: request.Compress}
 	payload, err := protocol.EncodeJSON(message)
@@ -508,6 +501,7 @@ func (s *session) handoff(conn net.Conn, request protocol.NewStreamRequest, targ
 		return err
 	}
 	_ = conn.SetWriteDeadline(time.Time{})
+	// 服务端在建流指令中请求压缩时已回告同意，回告帧之后的数据按压缩通道转发
 	if request.Compress {
 		conn = protocol.NewCompressConn(conn)
 	}
@@ -571,13 +565,12 @@ func (s *session) isClosedLocked() bool {
 }
 
 // close 关闭会话及其持有的全部连接
-//
-// 空闲连接与正在转发的连接都要关闭，否则转发协程会一直卡在会话收尾上
 func (s *session) close() {
 	s.closeOnce.Do(func() {
 		close(s.closed)
 		_ = s.conn.Close()
 		s.mu.Lock()
+		// 空闲连接与正在转发的连接都要关闭，否则转发协程会一直卡在会话收尾上
 		idle := s.idleConns
 		s.idleConns = nil
 		busy := s.busyConns

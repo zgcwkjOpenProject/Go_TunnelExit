@@ -1,4 +1,7 @@
-// main 是隧道客户端入口：加载配置、连接服务端并维持空闲连接池
+// main 是隧道客户端入口，加载配置后连接服务端并维持空闲连接池
+//
+// 同时启动本机配置管理页，配置保存后不重启进程而是重载配置并重建会话
+// 服务端公钥不可用时保持进程并每小时重试，避免用户改好配置后还要手工重启
 package main
 
 import (
@@ -15,9 +18,7 @@ import (
 	"tunnelexit/webui"
 )
 
-// keyRetryInterval 是公钥不可用时重新尝试连接服务端的间隔
-//
-// 公钥缺失或填错不会自愈，但服务端可能重新生成密钥对，因此不能一直等到用户改配置
+// keyRetryInterval 是公钥不可用时重新尝试连接服务端的间隔，公钥缺失或填错不会自愈但服务端可能重新生成密钥对
 const keyRetryInterval = time.Hour
 
 // main 启动客户端并等待退出信号
@@ -78,7 +79,7 @@ func main() {
 	signalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// 界面保存配置后不重启进程：取消当前会话的上下文让它主动断开，再用新参数重新连接。
+	// 界面保存配置后不重启进程：取消当前会话的上下文让它主动断开，再用新参数重新连接
 	// Run 直接调用会一直阻塞到上下文结束，因此放到独立协程里，由下面的 select 决定何时收尾
 	for {
 		runCtx, cancel := context.WithCancel(signalCtx)
@@ -115,9 +116,8 @@ func main() {
 }
 
 // reloadConfig 重新读取磁盘配置并返回，供调用方交给客户端实例应用
-//
-// 保存后立即生效由这里保证：配置页只发信号，真正的重载与日志都在主循环完成
 func reloadConfig(configPath string) app.ClientConfig {
+	// 配置页只发信号，真正的重载与日志都在主循环完成，保存后立即生效由这里保证
 	updated := app.LoadClientConfig(configPath)
 	app.Logf("client", "配置已更新，按新参数重建隧道连接：服务端 %s:%d，空闲连接数 %d",
 		updated.ServerHost, updated.Port, updated.PoolSize)

@@ -1,4 +1,7 @@
-// build 保存构建期通过 ldflags 注入的版本信息
+// build 保存构建期注入的版本与平台信息
+//
+// 三个变量都由构建脚本通过 -ldflags -X 写入，版本号的唯一来源是 common/version
+// 直接 go build 时保持占位值，启动日志照常打印
 package app
 
 // BuildVersion 是 main 包按 common/version 注入的发布版本

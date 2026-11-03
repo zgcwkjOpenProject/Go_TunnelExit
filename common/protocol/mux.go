@@ -1,4 +1,7 @@
-// mux 实现在单条数据连接上承载多条隧道流的复用会话
+// mux 在单条数据连接上按流标识复用多条隧道流
+//
+// 客户端登录时声明复用能力，服务端据此只维持少量载体连接，多条流共享载体
+// 数据与流结束用帧类型 7 与 8 承载，未协商复用时会话整段回退独立连接模式
 package protocol
 
 import (
@@ -10,9 +13,6 @@ import (
 )
 
 // MuxSession 在一条数据连接上按流标识复用多条隧道流
-//
-// 建流指令 FrameNewStream 与回告 FrameNewWorkConn 沿用既有 JSON 结构，流标识以负载为准；
-// 数据与流结束分别用 FrameData 与 FrameStreamClose 承载，帧头的流标识字段参与分发
 type MuxSession struct {
 	conn      net.Conn
 	writeMu   sync.Mutex                          // 串行化连接上的帧写入
@@ -25,9 +25,8 @@ type MuxSession struct {
 }
 
 // NewMuxSession 在已协商复用的连接上创建会话
-//
-// onStream 在收到建流指令时被调用，服务端开流方无需承接建流指令，传 nil 即可
 func NewMuxSession(conn net.Conn, onStream func(*MuxSession, NewStreamRequest)) *MuxSession {
+	// onStream 在收到建流指令时被调用，服务端开流方无需承接建流指令，传 nil 即可
 	return &MuxSession{
 		conn:     conn,
 		streams:  make(map[uint64]*MuxStream),

@@ -1,4 +1,7 @@
-// nodes 在服务端内部维护客户端到 SOCKS5 端口、流量统计的持久化记录
+// nodes 在服务端内部维护客户端到 SOCKS5 端口与流量统计的持久化记录
+//
+// 记录以客户端唯一 ID 为键，端口、来源 IP 与双向流量一并落盘，重连后端口保持稳定
+// 从池中取连接与丢弃连接必须区分开，取出后转数据通道的连接不能被当成空闲连接回收
 package server
 
 import (
@@ -25,9 +28,6 @@ type NodeRecord struct {
 }
 
 // NodeStore 管理客户端到 SOCKS5 端口与流量统计的持久化记录
-//
-// 端口按客户端 ID 与来源 IP 的组合分配：同一个 ID 在原地址重连始终占用同一个端口，
-// 同一台机器上运行多个客户端也能各自拿到独立端口
 type NodeStore struct {
 	mu      sync.Mutex             // 保护 records、dirty 与分配过程
 	path    string                 // 记录文件路径
@@ -41,9 +41,8 @@ func NewNodeStore(path string) *NodeStore {
 }
 
 // Load 从磁盘读取节点记录，文件缺失时按空记录处理
-//
-// 记录一律照文件内容装载，端口与来源地址只在分配阶段按当前配置校正
 func (n *NodeStore) Load() error {
+	// 记录一律照文件内容装载，端口与来源地址只在分配阶段按当前配置校正
 	data, err := os.ReadFile(n.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -79,9 +78,8 @@ func (n *NodeStore) Record(clientID string) (NodeRecord, bool) {
 }
 
 // PortSeed 用客户端 ID 与来源 IP 算出端口分配起点在范围内的偏移
-//
-// 同一对组合始终得到同一个偏移，因此重连与服务端重启后都落回同一个端口
 func PortSeed(clientID, address string, count int) int {
+	// 同一对组合始终得到同一个偏移，因此重连与服务端重启后都落回同一个端口
 	if count <= 0 {
 		return 0
 	}
@@ -92,10 +90,9 @@ func PortSeed(clientID, address string, count int) int {
 	return int(hash.Sum64() % uint64(count))
 }
 
-// Reserve 为客户端分配 SOCKS5 端口，端口只落在 [base, base+count-1] 内
-//
-// 已分配且仍可用的记录直接复用，否则从该客户端的专属起点起顺序挑选，范围用满时由调用方拒绝登录
+// Reserve 为客户端分配 SOCKS5 端口，端口只落在配置的端口范围内
 func (n *NodeStore) Reserve(clientID, address, name string, base, count int, inUse func(int) bool) (int, error) {
+	// 已分配且仍可用的记录直接复用，否则从该客户端的专属起点起顺序挑选，范围用满时由调用方拒绝登录
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	record := n.records[clientID]

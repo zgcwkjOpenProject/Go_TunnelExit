@@ -1,4 +1,7 @@
-// compress 实现隧道流的 flate 压缩连接包装
+// compress 把已建立的隧道流包装成 flate 压缩通道
+//
+// 只有建流指令与回告都确认支持压缩才启用，旧对端按明文转发
+// 两个方向各持有独立的压缩状态，写入串行化后立即冲刷以免小数据滞留
 package protocol
 
 import (
@@ -8,21 +11,18 @@ import (
 	"sync"
 )
 
-// CompressConn 在一条 net.Conn 上按方向分别压缩与解压
-//
-// 两个方向各持有独立的 flate 状态，读方向在首次读取时才创建解压器
+// CompressConn 在一条 net.Conn 上按方向分别压缩与解压，两个方向各持有独立的 flate 状态
 type CompressConn struct {
 	net.Conn
 	writeMu  sync.Mutex // 串行化压缩器写入，flate 写状态不能并发
 	writer   *flate.Writer
 	readOnce sync.Once
-	reader   io.Reader
+	reader   io.Reader // 首次读取时才创建的解压器
 }
 
 // NewCompressConn 把连接包装成 flate 压缩通道
-//
-// 压缩级别是常量，创建失败只在级别非法时发生，失败时退回原始连接仅损失压缩率
 func NewCompressConn(conn net.Conn) net.Conn {
+	// 压缩级别是常量，创建失败只在级别非法时发生，失败时退回原始连接仅损失压缩率
 	writer, err := flate.NewWriter(conn, flate.BestSpeed)
 	if err != nil {
 		return conn

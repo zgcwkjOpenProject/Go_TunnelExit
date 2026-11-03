@@ -1,4 +1,6 @@
-// test 包对 TunnelExit 做黑盒测试，只依赖各包的公开接口
+// protocol_test 验证帧头格式、编解码边界、复用会话与压缩通道
+//
+// 用例只依赖 protocol 包的公开接口，新增消息时必须同步补往返用例
 package test
 
 import (

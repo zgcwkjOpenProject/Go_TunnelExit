@@ -1,6 +1,7 @@
 // session 实现单个隧道客户端的会话、空闲连接池与隧道流调度
 //
-// 服务端从池中取出一条空闲连接并下发建流指令，客户端回告结果后该连接转为数据通道
+// 会话跟踪已从池中取出并正在转发的活跃连接，收尾时连同空闲连接一起关闭
+// 从池中取出与丢弃是两个动作，转数据通道的连接绝不能走丢弃路径
 package server
 
 import (
@@ -224,10 +225,9 @@ func (c *ClientSession) releaseOutstanding(count int) {
 }
 
 // maintainPool 按需向客户端下发补池请求
-//
-// 支持复用的会话按载体数维持少量连接，空闲连接也计入载体名额，多余的直接关闭；
-// 不支持复用时按约定池深维持独立连接
 func (c *ClientSession) maintainPool() {
+	// 支持复用的会话按载体数维持少量连接，空闲连接也计入载体名额，多余的直接关闭；
+	// 不支持复用时按约定池深维持独立连接
 	select {
 	case <-c.closed:
 		return
@@ -269,9 +269,8 @@ func (c *ClientSession) maintainPool() {
 }
 
 // wakeDial 广播唤醒所有等待连接的出网请求
-//
-// 复用载体登记后能同时服务多条流，必须唤醒全部等待者而不是只放行一个
 func (c *ClientSession) wakeDial() {
+	// 复用载体登记后能同时服务多条流，必须唤醒全部等待者而不是只放行一个
 	c.mu.Lock()
 	close(c.notify)
 	c.notify = make(chan struct{})
@@ -360,9 +359,8 @@ func (c *ClientSession) Dial(host string, port int) (socks5.Stream, error) {
 }
 
 // startStream 在一条空闲连接上发起隧道流
-//
-// 返回 retry 为 true 表示该连接疑似失效，调用方应换用其他空闲连接重试
 func (c *ClientSession) startStream(conn net.Conn, host string, port int) (socks5.Stream, bool, error) {
+	// 返回 retry 为 true 表示该连接疑似失效，调用方应换用其他空闲连接重试
 	streamID := c.server.nextStreamID()
 	// 载体数已达目标时改走独立连接，避免并发建流把载体撑爆后空闲池再也补不回来
 	c.mu.Lock()
@@ -471,9 +469,8 @@ func (c *ClientSession) promoteMux(conn net.Conn, streamID uint64) (socks5.Strea
 }
 
 // openMuxStream 在复用载体上发起一条隧道流并等待客户端回告
-//
-// broken 为 true 表示载体已失效，调用方应摘除该载体换路重试
 func (c *ClientSession) openMuxStream(carrier *protocol.MuxSession, host string, port int) (socks5.Stream, bool, error) {
+	// broken 为 true 表示载体已失效，调用方应摘除该载体换路重试
 	streamID := c.server.nextStreamID()
 	payload, err := protocol.EncodeJSON(protocol.NewStreamRequest{StreamID: streamID, Host: host, Port: port, Compress: true, Mux: true})
 	if err != nil {
@@ -531,8 +528,6 @@ func (c *ClientSession) dropMux(carrier *protocol.MuxSession) {
 }
 
 // muxTrackedStream 包装复用流，在关闭时递减活跃流计数并维持载体数量
-//
-// 载体连接本身不随单条流关闭，只关流并发送结束帧
 type muxTrackedStream struct {
 	// MuxStream 是复用载体上的一条流
 	*protocol.MuxStream

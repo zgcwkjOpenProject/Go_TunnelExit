@@ -1,6 +1,7 @@
 // geoip 解析 ip2region 的 xdb 离线归属地库，只依赖标准库
 //
-// 多字节整数一律小端序，IPv4 库的段边界按字节倒序存放，IPv6 库按网络字节序存放
+// 只读运行目录下的 xdb 文件，IPv4 与 IPv6 各用一份库，缺失时只影响对应地址族
+// 解析结果用于服务端展示页的归属地文本与地图落点，不参与隧道转发
 package geoip
 
 import (
@@ -78,9 +79,8 @@ func (r Region) Place() string {
 }
 
 // Display 把归属地拼成展示文本，缺失字段跳过，与已有字段重复的值只保留一次
-//
-// 相邻字段常常同值，例如「北京|北京」，去重后展示文本不会出现连续重复的词
 func (r Region) Display() string {
+	// 相邻字段常常同值，例如「北京|北京」，去重后展示文本不会出现连续重复的词
 	values := []string{r.Country, r.Province, r.City, r.ISP}
 	parts := make([]string, 0, len(values))
 	for _, value := range values {
@@ -106,8 +106,6 @@ func contains(parts []string, value string) bool {
 }
 
 // Database 是一份只读的离线归属地库，只覆盖 IPv4 与 IPv6 中的一个版本
-//
-// 地址数量有限，查询结果全部缓存，进程重启才会失效
 type Database struct {
 	path        string                  // 数据文件路径，仅用于错误提示
 	file        *os.File                // 打开的数据文件，ReadAt 支持并发读取，关闭后置空
@@ -299,9 +297,8 @@ func (d *Database) search(ip net.IP) (Region, bool) {
 }
 
 // compareBounds 把网络字节序的地址与段边界按数值比较
-//
-// IPv4 库的段边界按字节倒序存放，IPv6 库按网络字节序存放，因此取值顺序不同
 func (d *Database) compareBounds(ip net.IP, stored []byte) int {
+	// IPv4 库的段边界按字节倒序存放，IPv6 库按网络字节序存放，因此取值顺序不同
 	for i := 0; i < len(ip); i++ {
 		left := ip[i]
 		right := stored[i]
@@ -319,9 +316,6 @@ func (d *Database) compareBounds(ip net.IP, stored []byte) int {
 }
 
 // Library 是归属地库集合，按地址族分别持有一份 IPv4 与 IPv6 数据文件
-//
-// 每个 IP 版本最多装载一份，未装载的版本一律按未收录处理，
-// 因此某一份库文件缺失或损坏只影响对应地址族的展示
 type Library struct {
 	// v4 是 IPv4 库，未装载时为 nil
 	v4 *Database
@@ -335,9 +329,8 @@ func NewLibrary() *Library {
 }
 
 // Load 打开一份数据文件并按它覆盖的 IP 版本归档，同一版本重复装载时报错
-//
-// 重复装载只提示不覆盖，避免把先装载的库换掉后两个版本落进同一份数据
 func (l *Library) Load(path string) error {
+	// 重复装载只提示不覆盖，避免把先装载的库换掉后两个版本落进同一份数据
 	database, err := Open(path)
 	if err != nil {
 		return err

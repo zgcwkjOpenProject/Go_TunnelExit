@@ -1,4 +1,6 @@
-// main 是隧道服务端入口：加载配置、启动 SOCKS5 端口分配与流调度
+// main 是隧道服务端入口，加载配置后启动隧道端口、SOCKS5 端口分配与展示页
+//
+// 服务端只监听一个隧道端口，首个帧区分登录连接与预建空闲连接，全部承载在 TLS 之上
 package main
 
 import (
@@ -92,9 +94,8 @@ func main() {
 }
 
 // webExposed 判断界面监听地址是否可能被外部访问
-//
-// 只有回环地址与本机名称才算安全，其余取值一律按对外暴露处理
 func webExposed(host string) bool {
+	// 只有回环地址与本机名称才算安全，其余取值一律按对外暴露处理
 	value := strings.TrimSpace(host)
 	if value == "" || strings.EqualFold(value, "localhost") {
 		return false

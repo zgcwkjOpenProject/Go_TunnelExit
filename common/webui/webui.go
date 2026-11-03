@@ -1,4 +1,7 @@
-// webui 提供 Web 界面：服务端只对外展示节点状态，客户端只提供本机配置管理，且不反向引用 server 与 client
+// webui 提供 Web 界面：服务端只对外展示节点状态，客户端只提供本机配置管理
+//
+// 界面只依赖 app 包，不反向引用 server 与 client，运行态信息由入口以回调注入
+// 监听地址、端口与挂载路径只由配置文件与环境变量决定，不在页面上暴露也不受保存请求影响
 package webui
 
 import (
@@ -109,9 +112,8 @@ func (u *UI) handleBaseRedirect(w http.ResponseWriter, r *http.Request) {
 }
 
 // Start 在后台监听并开始服务 Web 界面
-//
-// 返回错误说明界面无法使用，调用方只应记录日志而不必终止主程序
 func (u *UI) Start() error {
+	// 返回错误说明界面无法使用，调用方只应记录日志而不必终止主程序
 	listener, err := bind(u.opts)
 	if err != nil {
 		return err
@@ -137,9 +139,7 @@ func bind(opts Options) (net.Listener, error) {
 	if opts.Socket == "" {
 		return net.Listen("tcp", net.JoinHostPort(opts.Host, strconv.Itoa(opts.Port)))
 	}
-	// 上次运行残留的 socket 文件会让监听失败，先清理再重建
-	//
-	// 监听关闭时系统已自动摘掉该文件，此处的清理只为覆盖被强杀留下的残骸
+	// 上次运行残留的 socket 文件会让监听失败，先清理再重建；监听关闭时系统已自动摘掉该文件，此处的清理只为覆盖被强杀留下的残骸
 	if err := os.Remove(opts.Socket); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}

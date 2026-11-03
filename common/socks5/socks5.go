@@ -1,4 +1,6 @@
-// socks5 实现无认证的 SOCKS5 CONNECT 服务，实际出网交给注入的拨号函数
+// socks5 实现无认证的 SOCKS5 CONNECT 服务
+//
+// 只做握手与应答码映射，实际出网交给调用方注入的拨号函数，因此同一套实现能对接隧道流
 package socks5
 
 import (
@@ -90,9 +92,8 @@ func ReplyForError(err error) byte {
 }
 
 // Handle 处理一条 SOCKS5 连接，完成握手、拨号并双向转发数据
-//
-// 返回的错误仅用于服务端日志，调用方应在连接结束后关闭 conn
 func Handle(conn net.Conn, dial DialFunc) error {
+	// 返回的错误仅用于服务端日志，调用方应在连接结束后关闭 conn
 	deadline := time.Now().Add(HandshakeTimeout)
 	_ = conn.SetDeadline(deadline)
 	target, err := handshake(conn)

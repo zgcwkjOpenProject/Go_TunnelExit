@@ -1,9 +1,6 @@
-# 平台打包脚本共用函数
-#
-# 本文件被 platforms/build-*.ps1 通过点源方式引入，只提供函数，不执行任何动作
+# 平台打包脚本共用函数，被 platforms/build-*.ps1 点源引入，只提供函数不执行动作
 
 # 交叉编译 TunnelExit 二进制
-# 临时设置 GOOS/GOARCH/CGO_ENABLED，编译后恢复，避免污染调用方环境
 function Invoke-TunnelExitBuild {
     [CmdletBinding()]
     param(
@@ -19,6 +16,7 @@ function Invoke-TunnelExitBuild {
         [switch]$EnableCGO,
         [string]$CCompiler = ''
     )
+    # 临时设置 GOOS/GOARCH/CGO_ENABLED，编译后恢复，避免污染调用方环境
     if (-not (Test-Path (Join-Path $SourceDir 'go.mod'))) {
         throw "Go 模块目录缺少 go.mod: $SourceDir"
     }
@@ -70,8 +68,6 @@ function Invoke-TunnelExitBuild {
 }
 
 # 写入服务端默认配置，字段与 app.ServerConfig 保持一致
-#
-# 界面字段一并写出，用户能看到展示页的监听地址、端口与挂载路径前缀该怎么填
 function Write-TunnelExitServerConfig {
     [CmdletBinding()]
     param(
@@ -86,6 +82,7 @@ function Write-TunnelExitServerConfig {
         [int]$WebPort = 9732,
         [string]$WebPath = '/'
     )
+    # 界面字段一并写出，用户能看到展示页的监听地址、端口与挂载路径前缀该怎么填
     $json = @{
         port           = $Port
         socksHost      = $SocksHost
@@ -101,9 +98,6 @@ function Write-TunnelExitServerConfig {
 }
 
 # 写入客户端默认配置，字段与 app.ClientConfig 保持一致
-#
-# 客户端唯一 ID 由程序首次运行时生成并写回，因此这里不预置 id 字段；
-# 服务端公钥同样留空，由用户在客户端配置页粘贴服务端 keys/public_key.pem 里的 PEM 文本
 function Write-TunnelExitClientConfig {
     [CmdletBinding()]
     param(
@@ -117,6 +111,7 @@ function Write-TunnelExitClientConfig {
         [int]$WebPort = 7003,
         [string]$WebPath = '/'
     )
+    # 客户端唯一 ID 由程序首次运行时生成并写回，服务端公钥由用户在配置页粘贴，两者都不预置
     $json = @{
         serverHost = $ServerHost
         port       = $Port
@@ -145,16 +140,13 @@ function Get-TunnelExitArtifactName {
 }
 
 # 复制离线归属地库及其许可协议到打包目录
-#
-# IPv4 与 IPv6 各一个库，两个文件加起来约 47 MB，flash 紧张的设备可设置 TUNNELEXIT_SKIP_GEOIP=1 全部跳过，
-# 只想省掉 IPv6 库时用 TUNNELEXIT_SKIP_GEOIP_V6=1，留下 IPv4 库
-# 跳过或库文件缺失时只提示不中断，服务端运行起来会把对应地址族的归属地显示为未知地区
 function Copy-TunnelExitGeoIP {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$RepoRoot,
         [Parameter(Mandatory)][string]$DestDir
     )
+    # flash 紧张时用 TUNNELEXIT_SKIP_GEOIP=1 全部跳过，只想省掉 IPv6 库时用 TUNNELEXIT_SKIP_GEOIP_V6=1
     if ($env:TUNNELEXIT_SKIP_GEOIP -eq '1') {
         Write-Host '[geoip] 已按 TUNNELEXIT_SKIP_GEOIP=1 跳过归属地库' -ForegroundColor Yellow
         return
@@ -507,8 +499,8 @@ function Minify-JsText([string]$Text) {
 }
 
 # 压缩 CSS：去注释、折叠空白、清理常见分隔符周围的多余空格
-# 分隔符不含 + 和 -：calc() 要求加减号两侧保留空格，折叠后整条声明会失效
 function Minify-CssText([string]$Text) {
+    # 分隔符不含 + 和 -：calc() 要求加减号两侧保留空格，折叠后整条声明会失效
     $Text = [regex]::Replace($Text, '(?s)/\*.*?\*/', '')
     $Text = [regex]::Replace($Text, '\s+', ' ')
     $Text = [regex]::Replace($Text, '\s*([{}:;,>~])\s*', '$1')

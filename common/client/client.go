@@ -1,4 +1,7 @@
 // client 实现隧道客户端：连接服务端、维持空闲连接池并按指令本地出网
+//
+// 客户端主动连出，登录后按服务端下发的数量预建空闲连接，收到建流指令时用本机网络拨号
+// 因此服务端上的 SOCKS5 流量最终以客户端的 IP 访问目标资源
 package client
 
 import (
@@ -32,9 +35,8 @@ func New(cfg app.ClientConfig) *Client {
 }
 
 // config 返回客户端当前配置的副本
-//
-// 运行中的会话与重连流程都会读到它，因此与写配置共用同一把读写锁
 func (c *Client) config() app.ClientConfig {
+	// 运行中的会话与重连流程都会读到它，因此与写配置共用同一把读写锁
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.cfg
@@ -46,12 +48,10 @@ func (c *Client) Config() app.ClientConfig {
 }
 
 // UpdateConfig 替换客户端运行配置
-//
-// 只写入配置变量，不会主动结束当前会话：连接参数在每次重连时才重新读取，
-// 因此调用方需要自行取消正在运行的 Run 并重新启动，新参数才会真正用于拨号
 func (c *Client) UpdateConfig(cfg app.ClientConfig) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// 只写入配置变量，不会主动结束当前会话，调用方需要自行取消正在运行的 Run 并重新启动
 	c.cfg = cfg
 }
 
@@ -113,11 +113,9 @@ func (c *Client) runOnce(ctx context.Context) error {
 }
 
 // dialServer 建立到服务端隧道端口的加密连接
-//
-// 服务端只接受 TLS 连接，客户端还会按配置页填入的公钥校验对端身份：
-// 没填公钥或公钥与服务端不一致时直接失败，不再尝试建立明文连接
 func (c *Client) dialServer() (net.Conn, error) {
 	cfg := c.config()
+	// 服务端只接受 TLS 连接，没填公钥或公钥与服务端不一致时直接失败，不再尝试明文连接
 	tlsConfig, err := app.ClientTLSConfig(cfg.ServerKey)
 	if err != nil {
 		return nil, err

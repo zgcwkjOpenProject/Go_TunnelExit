@@ -1,4 +1,8 @@
-// config 负责定位程序目录并读写隧道服务端与客户端配置
+// config 定位运行目录并读写服务端与客户端配置
+//
+// 配置只有一个权威来源：先读 JSON 文件，再用 TUNNELEXIT_* 环境变量覆盖，
+// 配置页保存时复用同一对加载与保存函数，不自行解析文件
+// 端口范围、日志保留天数等约束集中在常量块里，调整默认值只改这一处
 package app
 
 import (
@@ -98,9 +102,8 @@ func AppDir() string {
 }
 
 // GeoIPPath 返回 IPv4 离线归属地库路径，可用 TUNNELEXIT_GEOIP_FILE 覆盖
-//
-// 指向不存在的文件等于关闭归属地展示，服务端只记日志不退出
 func GeoIPPath(appDir string) string {
+	// 指向不存在的文件等于关闭归属地展示，服务端只记日志不退出
 	if path := strings.TrimSpace(os.Getenv("TUNNELEXIT_GEOIP_FILE")); path != "" {
 		return path
 	}
@@ -210,9 +213,8 @@ func WebToken() string {
 }
 
 // WebSocket 返回套件网关接入的 unix socket 路径
-//
-// 路径由平台启动脚本下发，为空时界面按 webHost 与 webPort 走 TCP
 func WebSocket() string {
+	// 路径由平台启动脚本下发，为空时界面按 webHost 与 webPort 走 TCP
 	return strings.TrimSpace(os.Getenv("TUNNELEXIT_WEB_SOCKET"))
 }
 
@@ -357,9 +359,8 @@ func SaveClientConfig(path string, cfg ClientConfig) error {
 }
 
 // NewClientID 生成客户端唯一 ID，服务端据此结合来源 IP 分配固定的 SOCKS5 端口
-//
-// 用随机字节而不是主机信息，同机运行多个客户端才能各自拿到独立端口
 func NewClientID() string {
+	// 用随机字节而不是主机信息，同机运行多个客户端才能各自拿到独立端口
 	buf := make([]byte, clientIDBytes)
 	if _, err := rand.Read(buf); err != nil {
 		return fmt.Sprintf("%0*x", clientIDBytes*2, time.Now().UnixNano())

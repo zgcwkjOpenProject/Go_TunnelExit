@@ -1,10 +1,7 @@
-// e2e_test 打通"客户端 → 服务端 → 目标资源"的完整链路做端到端验证
+// e2e_test 打通客户端、服务端与目标资源的完整链路做端到端验证
 //
-// 拓扑与生产一致：
-//
-//	SOCKS5 客户端 → 服务端 SOCKS5 端口 → 隧道端口 → 本地客户端 → 目标服务
-//
-// 目标服务是真实 TCP 监听，因此测试覆盖了握手、连接池、建流、双向转发与关闭
+// 覆盖 SOCKS5 出网、IPv6 客户端、多流并发、端口拒绝与域名失败、客户端重连与接管、配置重载等场景
+// 改动出网链路、连接池或会话收尾时必须跑通本文件
 package test
 
 import (
@@ -135,9 +132,8 @@ func startTunnel(t *testing.T, name string) *tunnelFixture {
 }
 
 // startTunnelOn 拉起服务端与客户端，connectHost 是客户端连接隧道端口使用的地址
-//
-// 服务端始终监听通配地址，只有客户端一侧的接入地址随参数变化，用于覆盖不同地址族
 func startTunnelOn(t *testing.T, name, connectHost string) *tunnelFixture {
+	// 服务端始终监听通配地址，只有客户端一侧的接入地址随参数变化，用于覆盖不同地址族
 	t.Helper()
 	root := t.TempDir()
 	serverDir := filepath.Join(root, "server")
@@ -534,10 +530,9 @@ func TestEndToEndStopIsIdempotent(t *testing.T) {
 }
 
 // TestEndToEndClientReconnectsAfterServerRestart 验证服务端重启后客户端会重新登录并复用端口
-//
-// 重启会让客户端的控制连接与空闲连接失效，客户端必须结束旧会话并按退避间隔重连；
-// 会话收尾一旦被仍在转发的隧道流阻塞，客户端就永远不会再接入
 func TestEndToEndClientReconnectsAfterServerRestart(t *testing.T) {
+	// 重启会让客户端的控制连接与空闲连接失效，客户端必须结束旧会话并按退避间隔重连；
+	// 会话收尾一旦被仍在转发的隧道流阻塞，客户端就永远不会再接入
 	root := t.TempDir()
 	serverDir := filepath.Join(root, "server")
 	socksBase := freePortRange(t, testSocksPortCount)
@@ -630,10 +625,9 @@ func TestEndToEndClientReconnectsAfterServerRestart(t *testing.T) {
 }
 
 // TestEndToEndSameClientIDTakesOver 验证同 ID 客户端从同一地址重连接管端口，隧道仍可正常出网
-//
-// 服务端按客户端唯一 ID 与来源 IP 分配端口，同 ID 同地址的新会话顶掉旧会话但端口不变，
-// 因此这里通过端口本身仍然可用、且能完成一次回显来证明接管后链路是好的
 func TestEndToEndSameClientIDTakesOver(t *testing.T) {
+	// 服务端按客户端唯一 ID 与来源 IP 分配端口，同 ID 同地址的新会话顶掉旧会话但端口不变，
+	// 因此这里通过端口本身仍然可用、且能完成一次回显来证明接管后链路是好的
 	fixture := startTunnel(t, "e2e-duplicate")
 	defer fixture.stop()
 
@@ -723,10 +717,9 @@ func TestEndToEndDistinctClientsGetDistinctPorts(t *testing.T) {
 }
 
 // TestEndToEndClientReloadsConfig 验证运行中替换配置并重跑客户端后按新参数接入
-//
-// 对应配置页保存后的处理：入口更新客户端配置、取消当前会话上下文再重新 Run，
-// 客户端应断开旧服务端、沿用同一客户端 ID 登录新服务端，并在新服务端上正常出网
 func TestEndToEndClientReloadsConfig(t *testing.T) {
+	// 对应配置页保存后的处理：入口更新客户端配置、取消当前会话上下文再重新 Run，
+	// 客户端应断开旧服务端、沿用同一客户端 ID 登录新服务端，并在新服务端上正常出网
 	targetHost, targetPort, stopTarget := startEchoTarget(t)
 	defer stopTarget()
 

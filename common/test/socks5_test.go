@@ -1,4 +1,6 @@
-// socks5_test 通过真实 TCP 连接验证服务端的 SOCKS5 握手与转发行为
+// socks5_test 通过真实 TCP 连接验证 SOCKS5 握手与双向转发
+//
+// 覆盖 CONNECT 与域名地址、不支持的命令与认证方式、拨号失败时的应答码映射
 package test
 
 import (

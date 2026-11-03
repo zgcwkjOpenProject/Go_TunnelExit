@@ -1,6 +1,6 @@
-// status 定义服务端、客户端与 Web 界面共用的节点展示结构
+// status 定义服务端、客户端与 Web 界面共用的节点状态结构
 //
-// 放在 app 包是为了让 webui 既能读取又不反向依赖 server
+// 类型放在 app 包，界面读取节点状态时不反向依赖 server 与 client
 package app
 
 import "time"

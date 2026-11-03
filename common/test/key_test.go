@@ -1,6 +1,6 @@
 // key_test 验证服务端密钥对的生成、持久化与客户端按公钥校验身份的链路
 //
-// 隧道端口只承载 TLS 连接，因此"公钥不匹配就连不上"是这一层最关键的行为约定
+// 覆盖首次生成后复用、密钥损坏时重新生成、公钥缺失与不一致时客户端拒绝连接
 package test
 
 import (
@@ -174,9 +174,8 @@ func TestClientRejectsMissingPublicKey(t *testing.T) {
 }
 
 // TestServerRejectsNonTLSTunnelClient 验证隧道端口对明文连接直接拒绝
-//
-// 协议帧只在加密通道里出现，明文写入不会得到任何应答
 func TestServerRejectsNonTLSTunnelClient(t *testing.T) {
+	// 协议帧只在加密通道里出现，明文写入不会得到任何应答
 	root := t.TempDir()
 	serverDir := filepath.Join(root, "server")
 	socksBase := freePortRange(t, testSocksPortCount)

@@ -47,3 +47,6 @@ signing.local.ps1
 # 构建暂存与发布产物
 /build/
 /dist/
+
+# 本地临时文件
+/tmp/
