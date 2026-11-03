@@ -4,8 +4,8 @@
     生成服务端展示页内嵌的世界底图与落点坐标
 
 .DESCRIPTION
-    从 Natural Earth 110m 国家轮廓（公有领域数据）换算成一份 SVG 路径，并把各国标签坐标与
-    中国省级坐标一并投影成页面坐标，输出 common/webui/assets/worldmap.js。
+    从 Natural Earth 110m 国家轮廓（公有领域数据）换算成一份 SVG 路径，并把各国标签坐标、
+    中国省级坐标与 110m 数据缺失的小国坐标一并投影成页面坐标，输出 common/webui/assets/worldmap.js。
     底图随二进制内嵌，页面运行时不联网也不引用任何外部资源。
     投影采用墨卡托，纵向裁剪掉南极，横向覆盖全部经度。
     仓库提交的是生成结果，构建脚本不调用本脚本；调整投影参数后重新执行即可。
@@ -48,20 +48,66 @@ $ProvincePoints = [ordered]@{
 # 南极在裁剪范围内会被压成一条横向色带，直接跳过更干净
 $SkippedCountries = @('Antarctica')
 
+# 110m 轮廓里没有的小国与地区，按落点经纬度单独给一份，键与归属地库文本对齐
+$ExtraPoints = [ordered]@{
+    'Hong Kong' = @(114.192, 22.31); 'Macao' = @(113.508, 22.21); 'Macau' = @(113.508, 22.21)
+    'Singapore' = @(103.86, 1.296); '新加坡' = @(103.86, 1.296)
+    'Maldives' = @(73.404, 4.1724); '马尔代夫' = @(73.404, 4.1724)
+    'Bahrain' = @(50.544, 26.0206); '巴林' = @(50.544, 26.0206)
+    'Malta' = @(14.436, 35.9085); '马耳他' = @(14.436, 35.9085)
+    'Mauritius' = @(57.564, -20.2638); '毛里求斯' = @(57.564, -20.2638)
+    'Seychelles' = @(55.44, -4.603); '塞舌尔' = @(55.44, -4.603)
+    'Cape Verde' = @(-23.616, 15.1214); '佛得角' = @(-23.616, 15.1214)
+    'Comoros' = @(43.272, -11.69); '科摩罗' = @(43.272, -11.69)
+    'Monaco' = @(7.416, 43.7457); '摩纳哥' = @(7.416, 43.7457)
+    'Andorra' = @(1.512, 42.5109); '安道尔' = @(1.512, 42.5109)
+    'San Marino' = @(12.456, 43.9274); '圣马力诺' = @(12.456, 43.9274)
+    'Liechtenstein' = @(9.504, 47.1291); '列支敦士登' = @(9.504, 47.1291)
+    'Vatican' = @(12.456, 41.8975); 'Holy See' = @(12.456, 41.8975); '梵蒂冈' = @(12.456, 41.8975)
+    'Gibraltar' = @(-5.364, 36.1414); '直布罗陀' = @(-5.364, 36.1414)
+    'Guam' = @(144.792, 13.4469); '关岛' = @(144.792, 13.4469)
+    'Bermuda' = @(-64.764, 32.3028); '百慕大' = @(-64.764, 32.3028)
+    'Cayman Islands' = @(-81.252, 19.3155); '开曼群岛' = @(-81.252, 19.3155)
+    'Barbados' = @(-59.616, 13.2017); '巴巴多斯' = @(-59.616, 13.2017)
+    'Antigua and Barbuda' = @(-61.8, 17.1)
+    'Aruba' = @(-70.0, 12.5)
+    'British Virgin Islands' = @(-64.6, 18.4)
+    'Curaçao' = @(-68.9, 12.2)
+    'Guadeloupe' = @(-61.6, 16.2)
+    'Guernsey' = @(-2.6, 49.45)
+    'Isle of Man' = @(-4.5, 54.2)
+    'Jersey' = @(-2.1, 49.2)
+    'Kiribati' = @(173.0, 1.4)
+    'Martinique' = @(-61.0, 14.6)
+    'Réunion' = @(55.5, -21.1)
+    'Saint Martin' = @(-63.05, 18.07)
+    'Saint Pierre and Miquelon' = @(-56.3, 46.9)
+    'Sint Maarten' = @(-63.05, 18.03)
+    'United States Virgin Islands' = @(-64.8, 18.3)
+    'Åland' = @(20.0, 60.2)
+}
+
 # 轮廓数据里的官方国名与归属地库文本不一致的，按归属地库的写法再收录一份别名
 $CountryAliases = @{
-    'United States of America' = @('United States')
+    'United States of America' = @('United States', 'USA')
     'Czechia'                  = @('Czech Republic')
-    'North Korea'              = @('Korea')
-    'South Korea'              = @('Korea')
+    'North Korea'              = @('朝鲜')
+    'South Korea'              = @('Korea', 'Republic of Korea', '韩国')
     'Russia'                   = @('Russian Federation')
     'Syria'                    = @('Syrian Arab Republic')
     'Laos'                     = @('Lao People''s Democratic Republic')
     'Moldova'                  = @('Republic of Moldova')
     'North Macedonia'          = @('Macedonia')
     'Vietnam'                  = @('Viet Nam')
-    'Turkey'                   = @('Turkiye')
+    'Turkey'                   = @('Turkiye', 'Türkiye')
     'Iran'                     = @('Iran (Islamic Republic of)')
+    'United Kingdom'           = @('Great Britain')
+    'China'                    = @('中国')
+    'Bosnia and Herz.'         = @('Bosnia and Herzegovina')
+    'Dem. Rep. Congo'          = @('DR Congo')
+    'Dominican Rep.'           = @('Dominican Republic')
+    'Brunei'                   = @('Brunei Darussalam')
+    'S. Sudan'                 = @('South Sudan')
 }
 
 # 墨卡托纵坐标，纬度先夹到裁剪范围内再换算
@@ -157,6 +203,11 @@ foreach ($province in $ProvincePoints.Keys) {
     $places[$province] = ConvertTo-Point $coordinate[0] $coordinate[1]
 }
 
+foreach ($extra in $ExtraPoints.Keys) {
+    $coordinate = $ExtraPoints[$extra]
+    $places[$extra] = ConvertTo-Point $coordinate[0] $coordinate[1]
+}
+
 Write-Host "[map] 环数量: $rings，落点数量: $($places.Count)" -ForegroundColor Cyan
 
 $svg = '<svg class="map-svg" viewBox="0 0 {0} {1}" preserveAspectRatio="xMidYMid meet" role="img">' -f $Width, $height
@@ -188,6 +239,7 @@ $($placeLines -join ",`n")
 };
 "@
 
-Set-Content -LiteralPath $OutFile -Value $content -Encoding utf8
+# 结尾换行用 here-string 之外的拼接给出，Set-Content 加 -NoNewline 避免再混入 CRLF
+Set-Content -LiteralPath $OutFile -Value ($content + "`n") -Encoding utf8 -NoNewline
 $size = (Get-Item -LiteralPath $OutFile).Length
 Write-Host "[map] 已写出 $OutFile（$size 字节）" -ForegroundColor Green

@@ -156,19 +156,29 @@ function renderNodes(items) {
 // SVG 命名空间，动态创建标记时必须显式指定
 var SVG_NS = 'http://www.w3.org/2000/svg';
 
-// 底图视口固定按世界地图的长宽比裁切，缩放时渲染高度才不会变
+// 世界地图自身的宽高比（高除以宽），也是窄屏下的视野比例
 var MAP_RATIO = WORLD_MAP.height / WORLD_MAP.width;
+
+// 视野比例下限，窗口又宽又矮时宁可上下裁掉一些也把比例压回这个范围
+var MAP_ASPECT_MIN = MAP_RATIO / 1.5;
 
 // 空间极度不足时的地图高度下限，再小就放弃避让滚动条
 var MAP_MIN_HEIGHT = 70;
 
-// 缩放范围，100% 表示整幅世界地图铺满容器宽度
+// 缩放范围，100% 表示按当前视野比例能铺满画布的最大缩小视野
 var MAP_ZOOM_MIN = 1;
 var MAP_ZOOM_MAX = 8;
 
-// 地图当前缩放倍数与中心点，首次打开是 100% 的世界地图
+// 中国默认视野在省份包围盒外多留的余量倍数，让邻国出现在画面里作参照
+var MAP_CHINA_MARGIN = 1.35;
+
+// 地图当前缩放倍数、中心点与视野宽高比，视野比例由容器尺寸决定
 var mapZoom = 1;
 var mapCenter = [WORLD_MAP.width / 2, WORLD_MAP.height / 2];
+var mapAspect = MAP_RATIO;
+
+// 是否已应用过中国默认视野，首次真正绘制地图时才按容器比例套用
+var mapStarted = false;
 
 // 当前显示速率的落点，悬停优先预览，没悬停时看单击选中的那个
 var mapHover = null;
@@ -215,18 +225,53 @@ function summarize(group) {
   return summary;
 }
 
-// 按当前缩放倍数与中心点算出视口，中心点始终夹在底图内，拖不出空白
+// 缩放下限，视野比例大于世界地图比例时抬高以保证底图铺满画布
+function mapZoomMin() {
+  return Math.max(MAP_ZOOM_MIN, mapAspect / MAP_RATIO);
+}
+
+// 中国区域的默认视野
+function chinaView() {
+  // 按省份落点扫出包围盒
+  var bounds = null;
+  WORLD_MAP.provinces.forEach(function(name) {
+    var point = WORLD_MAP.places[name];
+    if (!point) { return; }
+    if (!bounds) {
+      bounds = [point[0], point[1], point[0], point[1]];
+      return;
+    }
+    bounds[0] = Math.min(bounds[0], point[0]);
+    bounds[1] = Math.min(bounds[1], point[1]);
+    bounds[2] = Math.max(bounds[2], point[0]);
+    bounds[3] = Math.max(bounds[3], point[1]);
+  });
+  if (!bounds) {
+    return { zoom: mapZoomMin(), center: [WORLD_MAP.width / 2, WORLD_MAP.height / 2] };
+  }
+  // 宽或高哪个更占视野就按它决定缩放，四周留出一圈邻国作参照
+  var span = Math.max(bounds[2] - bounds[0], (bounds[3] - bounds[1]) / mapAspect) * MAP_CHINA_MARGIN;
+  return {
+    zoom: Math.min(Math.max(WORLD_MAP.width / span, mapZoomMin()), MAP_ZOOM_MAX),
+    center: [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2]
+  };
+}
+
+// 当前缩放与中心点对应的视口
 function mapView() {
-  var span = WORLD_MAP.width / mapZoom;
-  var height = span * MAP_RATIO;
+  // 缩放低于下限时按下限取值，中心点夹在底图内拖不出空白
+  var zoom = Math.max(mapZoom, mapZoomMin());
+  var span = WORLD_MAP.width / zoom;
+  var height = span * mapAspect;
   mapCenter[0] = Math.min(Math.max(mapCenter[0], span / 2), WORLD_MAP.width - span / 2);
   mapCenter[1] = Math.min(Math.max(mapCenter[1], height / 2), WORLD_MAP.height - height / 2);
   return [mapCenter[0] - span / 2, mapCenter[1] - height / 2, span, height];
 }
 
-// 以底图坐标 anchor 为锚点缩放，该点在屏幕上尽量不动，鼠标所指的位置不会跑
+// 锚点缩放
 function zoomMap(zoom, anchor) {
-  var next = Math.min(Math.max(zoom, MAP_ZOOM_MIN), MAP_ZOOM_MAX);
+  var next = Math.min(Math.max(zoom, mapZoomMin()), MAP_ZOOM_MAX);
+  // 缩放前后锚点在屏幕上的位置不变，鼠标所指的位置不会跑
   var point = anchor || mapCenter;
   var ratio = mapZoom / next;
   mapCenter = [
@@ -308,7 +353,7 @@ function bindMap() {
     var mid = [(first.x + second.x) / 2, (first.y + second.y) / 2];
     var distance = Math.hypot(first.x - second.x, first.y - second.y) || 1;
     var rect = canvas.getBoundingClientRect();
-    var next = Math.min(Math.max(drag.zoom * distance / drag.distance, MAP_ZOOM_MIN), MAP_ZOOM_MAX);
+    var next = Math.min(Math.max(drag.zoom * distance / drag.distance, mapZoomMin()), MAP_ZOOM_MAX);
     var ratio = drag.zoom / next;
     mapCenter = [
       drag.anchor[0] + (drag.center[0] - drag.anchor[0]) * ratio - (mid[0] - drag.mid[0]) * drag.view[2] / rect.width,
@@ -372,7 +417,7 @@ function bindMap() {
   document.getElementById('zoom-in').addEventListener('click', function() { zoomMap(mapZoom * 1.4); });
   document.getElementById('zoom-out').addEventListener('click', function() { zoomMap(mapZoom / 1.4); });
   document.getElementById('zoom-reset').addEventListener('click', function() {
-    mapZoom = 1;
+    mapZoom = mapZoomMin();
     mapCenter = [WORLD_MAP.width / 2, WORLD_MAP.height / 2];
     renderMap(lastItems);
   });
@@ -387,8 +432,7 @@ function labelLines(group) {
     });
 }
 
-// 落点挨得近时标签会叠在一起，按上下左右四个方向逐步外移找空位并夹在视口内
-// 挪不出空位的标签返回 false，宁可少画一个也不要把整片文字压成一团
+// 落点挨得近时标签按上下左右逐步外移找空位，放不下时返回 false 宁可少画
 function placeLabel(placed, label, x, y, radius, size, view) {
   var box = label.getBBox();
   var width = box.width;
@@ -443,14 +487,18 @@ function labelText(lines, size) {
   return text;
 }
 
-// 宽屏下按窗口剩余高度收窄地图，避免整页出现滚动条
-function fitBox(box, view) {
-  var host = box.parentElement;
-  host.style.maxWidth = '';
-  if (window.matchMedia('(max-width: 640px)').matches || !box.clientWidth) { return; }
+// 宽屏下按容器尺寸确定视野比例
+function fitBox(box) {
+  if (window.matchMedia('(max-width: 640px)').matches || !box.clientWidth) {
+    mapAspect = MAP_RATIO;
+    return;
+  }
   var section = box.closest('section');
   var wrap = document.querySelector('.wrap');
-  if (!section || !wrap) { return; }
+  if (!section || !wrap) {
+    mapAspect = MAP_RATIO;
+    return;
+  }
 
   // 除地图外其他区块都占固定高度，先算出它们占掉的纵向空间
   var others = 0;
@@ -460,10 +508,9 @@ function fitBox(box, view) {
     others += child.getBoundingClientRect().height + (parseFloat(style.marginBottom) || 0);
   });
   var overhead = section.getBoundingClientRect().height - box.getBoundingClientRect().height;
+  // 地图高度取窗口剩余空间，铺不下的方向靠视野裁切；窗口又宽又矮时压回比例下限
   var height = Math.max(wrap.clientHeight - others - overhead, MAP_MIN_HEIGHT);
-  var width = Math.floor(height * view[2] / view[3]);
-  // 收窄的是外层容器，缩放按钮才贴着地图右下角
-  if (width < box.clientWidth) { host.style.maxWidth = width + 'px'; }
+  mapAspect = Math.max(height / box.clientWidth, MAP_ASPECT_MIN);
 }
 
 // 重绘地图标记，底图只插入一次，后续只替换标记层
@@ -490,11 +537,17 @@ function renderMap(items) {
     return grouped.groups[right].nodes.length - grouped.groups[left].nodes.length;
   });
 
-  // 视口由缩放与平移状态决定，默认就是整幅世界地图
+  // 首次绘制放大到中国区域，之后视口由缩放与平移状态决定
+  fitBox(box);
+  if (!mapStarted) {
+    mapStarted = true;
+    var initial = chinaView();
+    mapZoom = initial.zoom;
+    mapCenter = initial.center;
+  }
   var view = mapView();
   svg.setAttribute('viewBox', view.join(' '));
-  fitBox(box, view);
-  document.getElementById('zoom-reset').textContent = Math.round(mapZoom * 100) + '%';
+  document.getElementById('zoom-reset').textContent = Math.round(mapZoom / mapZoomMin() * 100) + '%';
 
   // 底图被缩小后标记也会跟着变小，按屏幕像素留出半径与字号的下限
   var unit = box.clientWidth > 0 ? view[2] / box.clientWidth : 1;
@@ -593,14 +646,25 @@ function render(items) {
   renderMap(items);
 }
 
-// 在地图与列表之间切换，同一时间只显示一个
-// 默认是列表，地图只在切过去时才按当前容器尺寸重绘
+// 视图选择的本地存储键
+var VIEW_STORAGE_KEY = 'tunnelexit_view';
+
+// 记忆的视图
+function loadView() {
+  // 没有记录或本地存储不可用时回退到列表
+  try { return localStorage.getItem(VIEW_STORAGE_KEY) === 'map' ? 'map' : 'list'; }
+  catch (error) { return 'list'; }
+}
+
+// 地图与列表的切换
 function showPanel(name) {
   var map = name === 'map';
   document.getElementById('panel-map').hidden = !map;
   document.getElementById('panel-list').hidden = map;
   document.getElementById('tab-map').className = map ? 'tab active' : 'tab';
   document.getElementById('tab-list').className = map ? 'tab' : 'tab active';
+  // 把选择记到本地供下次恢复，地图只在切过去时才按当前容器尺寸重绘
+  try { localStorage.setItem(VIEW_STORAGE_KEY, map ? 'map' : 'list'); } catch (error) {}
   if (map) { bindMap(); renderMap(lastItems); }
 }
 
@@ -610,6 +674,9 @@ document.getElementById('tab-map').addEventListener('click', function() {
 document.getElementById('tab-list').addEventListener('click', function() {
   showPanel('list');
 });
+
+// 按上次的选择展示地图或列表
+showPanel(loadView());
 
 // 横竖屏切换或改窗口大小后重新适配地图视口
 window.addEventListener('resize', function() {
