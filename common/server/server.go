@@ -354,10 +354,9 @@ func (s *Server) serveSocks(listener net.Listener, session *ClientSession) {
 // 外部客户端与目标之间的双向数据都经过这条连接，因此在这里统计双向流量
 func (s *Server) handleSocks(conn net.Conn, session *ClientSession) {
 	remote := conn.RemoteAddr().String()
-	traffic := &trafficConn{Conn: conn}
+	traffic := &trafficConn{Conn: conn, session: session}
 	err := socks5.Handle(traffic, session.Dial)
 	_ = conn.Close()
-	session.AddTraffic(traffic.up.Load(), traffic.down.Load())
 	if err != nil {
 		app.Logf("server", "客户端 %s 的 SOCKS5 请求 %s 结束: %v", session.name, remote, err)
 	}
@@ -367,16 +366,15 @@ func (s *Server) handleSocks(conn net.Conn, session *ClientSession) {
 //
 // 只嵌入 net.Conn，不实现 ReaderFrom 或 WriterTo，使 io.Copy 的两个方向都落到下面的读写方法上
 type trafficConn struct {
-	net.Conn               // 原始连接
-	up       atomic.Uint64 // 上行字节数，外部客户端发往目标
-	down     atomic.Uint64 // 下行字节数，目标返回给外部客户端
+	net.Conn                // 原始连接
+	session  *ClientSession // 流量归属的客户端会话
 }
 
 // Read 读取外部客户端数据并计入上行
 func (t *trafficConn) Read(buffer []byte) (int, error) {
 	read, err := t.Conn.Read(buffer)
 	if read > 0 {
-		t.up.Add(uint64(read))
+		t.session.AddTraffic(uint64(read), 0)
 	}
 	return read, err
 }
@@ -385,7 +383,7 @@ func (t *trafficConn) Read(buffer []byte) (int, error) {
 func (t *trafficConn) Write(buffer []byte) (int, error) {
 	written, err := t.Conn.Write(buffer)
 	if written > 0 {
-		t.down.Add(uint64(written))
+		t.session.AddTraffic(0, uint64(written))
 	}
 	return written, err
 }

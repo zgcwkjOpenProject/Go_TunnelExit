@@ -137,7 +137,7 @@ func (c *ClientSession) State() app.NodeState {
 	return app.NodeStateOnline
 }
 
-// AddTraffic 把一条已结束的 SOCKS5 连接的双向流量计入本客户端
+// AddTraffic 把双向流量增量实时计入本客户端的持久化记录
 func (c *ClientSession) AddTraffic(up, down uint64) {
 	c.server.store.AddTraffic(c.id, up, down)
 }
